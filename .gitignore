@@ -1,0 +1,47 @@
+﻿# ===================================================================
+# mortflow — .gitignore
+# ===================================================================
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Virtual environment ---
+.venv/
+venv/
+env/
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*.orig
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- mortflow: local config (never commit) ---
+# Copy paths.sample.yaml → paths.local.yaml and edit to point at your data.
+paths.local.yaml
+
+# --- mortflow: real data folder (never commit) ---
+# Your real data lives here (or on a synced cloud folder via paths.local.yaml).
+# Use data_sample/ for the bundled demo data — that IS tracked.
+data/
+
+# --- mortflow: generated outputs ---
+out/
+out_sample/
+
+# --- Environment / secrets ---
+.env
+*.env

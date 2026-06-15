@@ -1,0 +1,22 @@
+# data_sample/portfolio.yaml
+# Sample portfolio — generic placeholder properties.
+# Rename .sample.yaml → .yaml and .sample.csv → .csv in your own data folder,
+# then fill in real values before running with run.bat.
+
+portfolio_name: Sample Portfolio
+properties:
+  - name: Property A
+    property_kind: investment
+    inputs: property_a/inputs.sample.yaml
+    actuals: property_a/actuals.sample.csv
+    enabled: true
+    out_dir: property-a
+    tax_enabled: true
+
+  - name: Property B
+    property_kind: primary
+    inputs: property_b/inputs.sample.yaml
+    actuals: property_b/actuals.sample.csv
+    enabled: false
+    out_dir: property-b
+    tax_enabled: false

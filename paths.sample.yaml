@@ -1,0 +1,13 @@
+# paths.sample.yaml -- tracked template.
+#
+# Copy this file to paths.local.yaml (which is git-ignored) and set the two
+# keys below to where your real data and outputs live. If you leave both keys
+# commented out, the engine falls back to the in-repo ./data and ./out
+# folders, so a fresh clone runs on the bundled sample data with no setup.
+#
+# Use forward slashes even on Windows; they avoid backslash-escaping issues.
+# The environment variables MORTGAGE_DATA_DIR and MORTGAGE_OUT_DIR override
+# whatever is set here.
+
+# data_dir: "D:/path/to/mortgage_model/data"
+# out_dir:  "D:/path/to/mortgage_model/out"

@@ -1,0 +1,61 @@
+# data_sample/property_b/inputs.sample.yaml
+# Sample primary residence — enabled: false so the engine skips it.
+# Schema mirrors a real inputs.yaml so you can copy and adapt.
+# NEVER put real addresses, balances, or personal data here.
+
+meta:
+  property_id: property-b
+  name: "Property B"
+  mode: primary
+
+loan:
+  property_price: 280000
+  principal_at_drawdown: 224000
+  drawdown_date: 2020-06-01
+  total_term_months: 300
+  first_payment_date: 2020-09-01
+  known_first_payment: 1005.50
+  repayment_day_default: 1
+  property_growth_pa: 0.025
+  overpayment_cap_pct: 0.10
+
+rate_blocks:
+  - { start_month: 1,   end_month: 60,  annual_rate: 0.0250, kind: fixed }
+  - { start_month: 61,  end_month: 120, annual_rate: 0.0350, kind: fixed }
+  - { start_month: 121, end_month: 999, annual_rate: 0.0300, kind: variable }
+
+strategy_at_refix: RecalculatePayment
+
+overpay_rules: []
+lump_sums: []
+
+bank:
+  day_count: ACT/365
+  rounding_decimals: 2
+  merge_standing_extra_into_payment: auto
+  interest_posting_rule: actual_or_eom
+  payment_holidays:
+    - { start: 2020-06-01, end: 2020-08-31, mode: interest_only, capitalise: true }
+
+reconcile:
+  ok_abs_eur: 0.01
+  snapshots: []
+
+output:
+  write_excel: true
+  write_csv: true
+  include_daily_events: true
+  currency: EUR
+  locale: en_IE
+
+modelling:
+  end_date: 2045-07-01
+  day_count: ACT/365
+
+tax:
+  enabled: false
+  jurisdiction: IE
+  use_posting_date_for_year: true
+  deductible_percentage_by_year:
+    default: 1.00
+  deductible_windows: []

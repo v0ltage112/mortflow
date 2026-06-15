@@ -1,0 +1,68 @@
+# data_sample/property_a/inputs.sample.yaml
+# Sample investment property — realistic Irish BTL mortgage, fully fictitious values.
+# NEVER put real addresses, balances, or personal data here.
+
+meta:
+  property_id: property-a
+  name: "Property A"
+  mode: investment
+
+loan:
+  property_price: 395000
+  principal_at_drawdown: 340000
+  drawdown_date: 2022-11-10
+  total_term_months: 300
+  first_payment_date: 2023-02-01
+  known_first_payment: 1695.00
+  repayment_day_default: 1
+  property_growth_pa: 0.02
+  overpayment_cap_pct: 0.10
+
+# Rate path; month numbers are from drawdown (1 = drawdown month).
+rate_blocks:
+  - { start_month: 1,  end_month: 36,  annual_rate: 0.0300, kind: fixed }
+  - { start_month: 37, end_month: 72,  annual_rate: 0.0425, kind: fixed }
+  - { start_month: 73, end_month: 999, annual_rate: 0.0375, kind: variable }
+
+strategy_at_refix: RecalculatePayment
+
+overpay_rules:
+  - { start_month: 12, amount: 100.0, repeat: monthly, end_month: null }
+
+lump_sums: []
+
+bank:
+  day_count: ACT/365
+  rounding_decimals: 2
+  merge_standing_extra_into_payment: auto
+  interest_posting_rule: actual_or_eom
+  payment_holidays:
+    - { start: 2022-11-10, end: 2023-01-31, mode: interest_only, capitalise: true }
+
+reconcile:
+  ok_abs_eur: 5.00
+  snapshots:
+    - { date: 2023-09-30, balance: 335453.00 }
+    - { date: 2023-10-31, balance: 334508.00 }
+
+output:
+  write_excel: true
+  write_csv: true
+  include_daily_events: true
+  currency: EUR
+  locale: en_IE
+
+modelling:
+  end_date: 2048-02-01
+  day_count: ACT/365
+
+tax:
+  enabled: true
+  jurisdiction: IE
+  tenancy_file: tenancy.local.yaml
+  use_posting_date_for_year: true
+  deductible_percentage_by_year:
+    default: 1.00
+  deductible_windows: []
+  audit:
+    write_monthly: true

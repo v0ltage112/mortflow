@@ -1,0 +1,55 @@
+# data_sample/property_a/tenancy.sample.yaml
+# Sample tenancy file — fully fictitious. DO NOT put real tenant names,
+# real RTB numbers, or real rent amounts here.
+# Your real tenancy data should live in tenancy.local.yaml (git-ignored).
+
+tenancies:
+  - id: T1
+    start: 2023-01-01
+    end: 2023-12-31
+    rent_amount: 2200.00
+    rent_frequency: monthly
+    pay_in_advance: true
+    rent_due_day: 1
+    security_deposit: 2200.00
+    admin_charges:
+      arrears_letter_eur: 30.00
+      non_so_processing_eur: 25.00
+    rtb:
+      registered: true
+      registration_number: "RTB-2023-IE-00123"
+      registration_date: 2023-01-12
+
+  - id: T2
+    start: 2024-02-15
+    end: null
+    rent_amount: 2200.00
+    rent_frequency: monthly
+    pay_in_advance: true
+    rent_due_day: 15
+    security_deposit: 2200.00
+    rtb:
+      registered: true
+      registration_number: "RTB-2024-IE-00456"
+      registration_date: 2024-02-22
+    rpz:
+      prior_tenancy:
+        rent_amount: 2200.00
+        rent_notice_date: 2023-12-20
+      relet_context:
+        tenancy_commencement: 2024-02-15
+        hicp_value_1: 121.30
+        hicp_value_2: 122.10
+        hicp_pct_change: 0.66
+        cap_2pct_rate: 1.02
+        max_pct_increase_permitted: 0.66
+        max_eur_increase_permitted: 14.52
+        computed_max_new_rent: 2214.52
+
+notes:
+  property_purchase_agreement_signed: 2022-10-28
+  drawdown_date: 2022-11-10
+  owner_occupied_any_time: false
+
+policy:
+  gaps_count_as_available: true
