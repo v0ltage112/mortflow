@@ -223,29 +223,6 @@ Remove those months from the tenancy file or configure `deductible_window` range
 
 ---
 
-## 🪜 Version history
-
-| Version | Date | Highlights |
-| --- | --- | --- |
-
----
-
-## 📄 Licence
-
-PolyForm Noncommercial License 1.0.0. Free for personal and non-commercial use.
-Commercial use requires a separate written agreement with the author.
-See `LICENSE` for full terms or contact: ali.asghar.madraswala@gmail.com
-
-- **`inputs.yaml`** – drawdown details, rate blocks, bank settings, valuation assumptions, and modelling windows. Tax settings live under the `tax:` block.
-- **`actuals.csv`** – chronological bank transactions: drawdown, scheduled repayments, extras, and posted interest.
-- **`tenancy.local.yaml`** – private tenancy metadata (rent, occupancy, RTB registration). Keep the file beside each property; it is gitignored and never committed.
-- **`portfolio.yaml`** – list of properties with pointers to inputs and actuals. Toggle `enabled: true/false` to control portfolio inclusion, or add metadata (e.g. `property_kind`, `tax_enabled`) for reporting.
-- **`paths.local.yaml`** – gitignored per-machine override of the data and output directories (`data_dir`, `out_dir`). Copy from `paths.sample.yaml`.
-
-See `data_sample/` for the expected format and schema of each file type.
-
----
-
 ## 📊 Tests
 
 The pytest suite covers reconciliation tolerances, interest accrual, valuation blocks, tax schedules, KPI calculations, path resolution, and regression guards around merge-extra behaviour.
@@ -281,12 +258,14 @@ Remove those months from the tenancy file or configure `deductible_window` range
 
 ---
 
-## 🪜 Version history
-
-| Version | Date | Highlights |
-| --- | --- | --- |
-| v1.4.0 | 2026-06-15 | Initial public release. Daily ACT/365 engine, anonymised sample data, PolyForm Noncommercial licence. |
-
+ ## 🪜 Version history
+ 
+ | Version | Date | Highlights |
+ | --- | --- | --- |
++| v1.4.0 | 2026-06-15 | Initial public release. Daily ACT/365 engine, anonymised sample data, PolyForm Noncommercial licence. |
++| v1.5.0 | 2026-06-16 | Verification & behaviour lock: golden-master snapshot test, pinned dependencies. |
+ 
+ ## 📄 Licence
 
 ---
 
@@ -294,5 +273,5 @@ Remove those months from the tenancy file or configure `deductible_window` range
 
 PolyForm Noncommercial License 1.0.0. Free for personal and non-commercial use.
 Commercial use requires a separate written agreement with the author.
-See `LICENSE` for full terms or contact: ali.asghar.madraswala@gmail.com
+See `LICENSE` for full terms or contact: a.a.madras@gmail.com
 ```
