@@ -262,8 +262,8 @@ Remove those months from the tenancy file or configure `deductible_window` range
  
  | Version | Date | Highlights |
  | --- | --- | --- |
-+| v1.4.0 | 2026-06-15 | Initial public release. Daily ACT/365 engine, anonymised sample data, PolyForm Noncommercial licence. |
-+| v1.5.0 | 2026-06-16 | Verification & behaviour lock: golden-master snapshot test, pinned dependencies. |
+| v1.4.0 | 2026-06-15 | Initial public release. Daily ACT/365 engine, anonymised sample data, PolyForm Noncommercial licence. |
+| v1.5.0 | 2026-06-16 | Verification & behaviour lock: golden-master snapshot test, pinned dependencies. |
  
  ## 📄 Licence
 
