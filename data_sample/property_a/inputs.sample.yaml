@@ -8,43 +8,71 @@ meta:
   mode: investment
 
 loan:
-  property_price: 395000
-  principal_at_drawdown: 340000
-  drawdown_date: 2022-11-10
-  total_term_months: 300
-  first_payment_date: 2023-02-01
-  known_first_payment: 1695.00
-  repayment_day_default: 1
-  property_growth_pa: 0.02
-  overpayment_cap_pct: 0.10
+  property_price: 550000            # For LTV analytics and sell scenarios
+  principal_at_drawdown: 495000     # Net amount advanced on drawdown day
+  drawdown_date: 2024-03-26         # Loan start date (value date)
+  total_term_months: 420            # Original contractual term
+  first_payment_date: 2024-08-14    # First bank debit (actual)
+  known_first_payment: 2123.44      # Contractual PMT excluding standing extras
+  repayment_day_default: 5          # Used only when no bank payment exists for a month
+  property_growth_pa: 0.03          # Simple growth path for LTV (optional)
+  overpayment_cap_pct: 0.10         # BOI rule: 10% of opening balance per calendar year
+
+  #If property revaluation blocks are needed to change either property value or growth rate, uncomment and edit below
+  #valuation_blocks:
+    #- { start: 2028-04-01, value: 600000, growth_pa: 0.01 }   # bank revalue at refix
+    #- { start: 2032-04-01, value: 640000, growth_pa: 0.02 }   # change long-run growth to 2%
 
 # Rate path; month numbers are from drawdown (1 = drawdown month).
+# Tip: prefer adding new blocks rather than editing historical ones.
 rate_blocks:
-  - { start_month: 1,  end_month: 36,  annual_rate: 0.0300, kind: fixed }
-  - { start_month: 37, end_month: 72,  annual_rate: 0.0425, kind: fixed }
-  - { start_month: 73, end_month: 999, annual_rate: 0.0375, kind: variable }
+  - { start_month: 1,  end_month: 48,  annual_rate: 0.0365, kind: fixed }
+  - { start_month: 49, end_month: 97,  annual_rate: 0.0475, kind: fixed }
+  - { start_month: 98, end_month: 999, annual_rate: 0.0400, kind: variable }
 
+# When a new block starts and there is no actual payment in that month:
+#   RecalculatePayment → compute new PMT at new rate over remaining term
+#   TermReduction     → keep PMT, reduce term
 strategy_at_refix: RecalculatePayment
 
+# Standing extras (applied on the payment date). Multiple rules allowed.
 overpay_rules:
-  - { start_month: 12, amount: 100.0, repeat: monthly, end_month: null }
+  - { start_month: 17, amount: 200.0, repeat: monthly, end_month: null }
 
-lump_sums: []
+# One-off reductions on exact dates (optional).
+lump_sums: []     # e.g., [ { date: 2027-06-30, amount: 5000 } ]
 
+# --- Optional, bank-specific behaviour (not all are used yet) ---
 bank:
-  day_count: ACT/365
-  rounding_decimals: 2
-  merge_standing_extra_into_payment: auto
-  interest_posting_rule: actual_or_eom
-  payment_holidays:
-    - { start: 2022-11-10, end: 2023-01-31, mode: interest_only, capitalise: true }
+  day_count: ACT/365                # Engine uses /365 today; can extend to ACT/360, ACT/365F
+  rounding_decimals: 2              # Post interest rounded to 2 decimals
+  merge_standing_extra_into_payment: true   # auto|true|false (engine infers from Actuals today)
+  interest_posting_rule: actual_or_eom      # Use actual date when provided, else EOM
+  payment_holidays:                  # Interest-only or full deferral windows (capitalise interest)
+    - { start: 2024-03-26, end: 2024-07-31, mode: interest_only, capitalise: true }
+
+# --- Optional, Irish tax settings (for reporting only; the engine already produces the numbers) ---
+tax:
+  jurisdiction: IE
+  # Interest is deductible against rental income when the property is let/available for letting.
+  # If you ever need to exclude months (e.g., not available to let), list windows below.
+  deductible_windows: []            # e.g., [ { start: 2025-01-01, end: 2025-12-31 } ]
+  use_posting_date_for_year: true   # Allocate interest to the year of *posting* (default)
+  deductible_percentage_by_year:    # If legislation changes, override here year→%
+    default: 1.00                   # 1.00 = 100% deductible
+    # 2018: 0.80
+    # 2019+: 1.00
+
+# --- BOI Screenshot for reconciliation ---
 
 reconcile:
-  ok_abs_eur: 5.00
+  ok_abs_eur: 300.00   # rows are OK if |model - bank| <= €300
   snapshots:
-    - { date: 2023-09-30, balance: 335453.00 }
-    - { date: 2023-10-31, balance: 334508.00 }
+    - { date: 2025-10-10, balance: 489826.81 }
+    - { date: 2025-11-06, balance: 489023.00 }
+    - { date: 2026-06-15, balance: 483079.15 }
 
+# --- Optional, output knobs ---
 output:
   write_excel: true
   write_csv: true
@@ -52,10 +80,12 @@ output:
   currency: EUR
   locale: en_IE
 
+# --- Modelling horizon ---
 modelling:
-  end_date: 2048-02-01
-  day_count: ACT/365
+  end_date: 2059-04-05
+  day_count: ACT/365                 # informational; the engine uses /365
 
+# --- Irish tax settings (Form 11; reporting-only) ---
 tax:
   enabled: true
   jurisdiction: IE
@@ -65,4 +95,4 @@ tax:
     default: 1.00
   deductible_windows: []
   audit:
-    write_monthly: true
+    write_monthly: true        # write a month-level audit sheet/CSV

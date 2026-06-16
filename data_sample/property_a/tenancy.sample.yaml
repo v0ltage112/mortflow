@@ -5,51 +5,64 @@
 
 tenancies:
   - id: T1
-    start: 2023-01-01
-    end: 2023-12-31
-    rent_amount: 2200.00
+    start: 2024-06-29
+    end: 2024-12-03        # null if ongoing
+    rent_amount: 2850.00
     rent_frequency: monthly
+    payment_day_of_month: 29   # "on or before" 29th each month
     pay_in_advance: true
-    rent_due_day: 1
-    security_deposit: 2200.00
+    security_deposit: 2850.00
     admin_charges:
-      arrears_letter_eur: 30.00
-      non_so_processing_eur: 25.00
+      arrears_letter_fee_eur: 30.00
+      cash_cheque_admin_fee_eur: 25.00
+      apply_arrears_letter_fee: false   # landlord discretion; flags kept for future use
+      apply_cash_cheque_fee: false
     rtb:
       registered: true
-      registration_number: "RTB-2023-IE-00123"
-      registration_date: 2023-01-12
+      registration_number: "REDACTED"
+      registration_date: 2024-07-10
+    rpz:
+      applicable: true
+      reference_previous_rent: 2850.00   # for first tenancy this equals current rent
+      rent_notice_date: 2024-06-29
+      hicp_value_1: null
+      hicp_value_2: null
+      hicp_pct_change: null
+      two_percent_cap_rate: null
+      max_pct_increase_permitted: 0.0
+      max_eur_increase_permitted: 0.00
+      max_new_rent_applicable: 2850.00
 
   - id: T2
-    start: 2024-02-15
+    start: 2025-01-16
     end: null
-    rent_amount: 2200.00
+    rent_amount: 2850.00
     rent_frequency: monthly
+    payment_day_of_month: 29
     pay_in_advance: true
-    rent_due_day: 15
-    security_deposit: 2200.00
+    security_deposit: 2850.00
+    admin_charges:
+      arrears_letter_fee_eur: 30.00
+      cash_cheque_admin_fee_eur: 25.00
+      apply_arrears_letter_fee: false
+      apply_cash_cheque_fee: false
     rtb:
       registered: true
-      registration_number: "RTB-2024-IE-00456"
-      registration_date: 2024-02-22
+      registration_number: "REDACTED"
+      registration_date: 2025-01-20
     rpz:
-      prior_tenancy:
-        rent_amount: 2200.00
-        rent_notice_date: 2023-12-20
-      relet_context:
-        tenancy_commencement: 2024-02-15
-        hicp_value_1: 121.30
-        hicp_value_2: 122.10
-        hicp_pct_change: 0.66
-        cap_2pct_rate: 1.02
-        max_pct_increase_permitted: 0.66
-        max_eur_increase_permitted: 14.52
-        computed_max_new_rent: 2214.52
+      applicable: true                                    #Based on the property's location/designation status
+      reference_previous_rent: 2850.00                    #The rent last lawfully set for the tenancy.
+      rent_notice_date: 2024-06-29                        #The date on the statutory Notice of Rent Review 
+      hicp_value_1: 119.80                                #Found in the RTB's HICP Index table, corresponding to the month of the last rent setting. 
+      hicp_value_2: 119.60                                #Found in the RTB's HICP Index table, corresponding to the month of the rent review notice.
+      hicp_pct_change: -0.002     # -0.2% as decimal      #Calculated as (hicp_value_2 - hicp_value_1) / hicp_value_1
+      two_percent_cap_rate: 0.011 # 1.10% as decimal      #The 2% annual cap, adjusted pro-rata for the length of time between the last rent setting and the notice date
+      max_pct_increase_permitted: 0.0                     #The maximum percentage increase allowed, being the lesser of the HICP change or the 2% cap.
+      max_eur_increase_permitted: 0.00                    #The maximum euro increase allowed, calculated as reference_previous_rent * max_pct_increase_permitted
+      max_new_rent_applicable: 2850.00                    #The new rent, being the reference_previous_rent plus the max_eur_increase_permitted
 
 notes:
-  property_purchase_agreement_signed: 2022-10-28
-  drawdown_date: 2022-11-10
+  property_purchase_agreement_signed: 2024-03-29
+  drawdown_date: 2024-03-26
   owner_occupied_any_time: false
-
-policy:
-  gaps_count_as_available: true
