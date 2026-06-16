@@ -158,7 +158,9 @@ def main():
             "property_name": name,
             "property_kind": str(p.get("property_kind", "")),
             "tax_enabled": bool(p.get("tax_enabled", False)),
-            "out_dir": str(out_dir),
+            # Record the relative slug, not the absolute path, so the portfolio
+            # summary is machine-independent and can be locked as a fixture.
+            "out_dir": slug,
         })
 
     # 4) Write portfolio summary (CSV + nicely formatted XLSX)
