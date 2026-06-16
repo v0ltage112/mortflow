@@ -1,0 +1,72 @@
+meta:
+  property_id: property-a
+  name: Property A
+  mode: investment
+loan:
+  property_price: 550000
+  principal_at_drawdown: 495000
+  drawdown_date: 2024-03-26
+  total_term_months: 420
+  first_payment_date: 2024-08-14
+  known_first_payment: 2123.44
+  repayment_day_default: 5
+  property_growth_pa: 0.03
+  overpayment_cap_pct: 0.1
+rate_blocks:
+- start_month: 1
+  end_month: 48
+  annual_rate: 0.0365
+  kind: fixed
+- start_month: 49
+  end_month: 97
+  annual_rate: 0.0475
+  kind: fixed
+- start_month: 98
+  end_month: 999
+  annual_rate: 0.04
+  kind: variable
+strategy_at_refix: RecalculatePayment
+overpay_rules:
+- start_month: 17
+  amount: 200.0
+  repeat: monthly
+  end_month: null
+lump_sums: []
+bank:
+  day_count: ACT/365
+  rounding_decimals: 2
+  merge_standing_extra_into_payment: true
+  interest_posting_rule: actual_or_eom
+  payment_holidays:
+  - start: 2024-03-26
+    end: 2024-07-31
+    mode: interest_only
+    capitalise: true
+tax:
+  enabled: true
+  jurisdiction: IE
+  tenancy_file: tenancy.local.yaml
+  use_posting_date_for_year: true
+  deductible_percentage_by_year:
+    default: 1.0
+  deductible_windows: []
+  audit:
+    write_monthly: true
+reconcile:
+  ok_abs_eur: 300.0
+  snapshots:
+  - date: 2025-10-10
+    balance: 489826.81
+  - date: 2025-11-06
+    balance: 489023.0
+  - date: 2026-06-15
+    balance: 483079.15
+output:
+  write_excel: true
+  write_csv: true
+  include_daily_events: true
+  currency: EUR
+  locale: en_IE
+modelling:
+  end_date: 2059-04-05
+  day_count: ACT/365
