@@ -1,37 +1,39 @@
 # src/engine/simulate.py
-"""Valuation, monthly scaffolding, and the core daily mortgage simulation.
+"""Scheduled-payment helper and the core daily mortgage simulation.
 
 Finance-readable summary
 ------------------------
-This module is the simulation engine. It turns the raw bank activity into
-a tidy month-by-month picture, then walks the loan day by day to produce
-the canonical numbers the business reports: the daily event log, the
-monthly schedule (interest, principal, balances, and LTV), and the
-bank-versus-model reconciliation. Property values used for LTV are now
-calculated in ``valuation.py`` and imported back into ``run_engine`` so
-the LTV columns continue to reconcile.
+This module is the simulation engine. ``run_engine`` is now a thin
+orchestrator: it runs the day-by-day walk of the loan, then hands the raw
+results to the monthly, valuation, and reconcile helpers to build the tables
+the business reports on (the daily event log, the monthly schedule with
+interest, principal, balances and LTV, and the bank-versus-model reconcile).
+The day-by-day walk itself lives in ``_simulate_daily`` so a reader can follow
+the simulation and the reporting steps separately.
 
 Technical summary
 -----------------
-Holds the scheduled payment helper (``payment_for_month``) and the daily
-simulator (``run_engine``). The monthly scaffolding (``build_rate_lookup``,
-``derive_modelling_end``, ``month_span``, ``month_tables``) and the post-loop
-monthly-schedule assembly (``build_monthly_schedule``) now live in
-``monthly.py`` and are imported via ``from .monthly import ...``. The property
-valuation helpers live in ``valuation.py``.
+Holds the scheduled-payment helper (``payment_for_month``), the daily simulator
+(``_simulate_daily``) with its explicit result contract (``DailyRunResult``),
+and the public entry point (``run_engine``). Monthly scaffolding and schedule
+assembly live in ``monthly.py``; property valuation in ``valuation.py``; the
+model-vs-bank reconcile in ``reconcile.py``. ``run_engine`` calls
+``_simulate_daily`` and then those helpers in fixed order, returning the same
+``(monthly, reconcile, events_df)`` tuple, in the same order and with the same
+columns, as before.
 
-Phase 5 / S4 note: the model-vs-bank reconcile cluster (the Payment/Interest
-join, ``diff_model_minus_bank``, and the tolerance labels ``ok_within_1c``,
-``ok_within_abs_eur``, ``ok_label``, ``ok_reason``) was lifted into
-``reconcile.py`` and is imported back via ``from .reconcile import
-build_reconcile``. Behaviour is unchanged; only imports, the relocated block,
-and this note were edited. The golden master still reads 46 passed, 2 skipped,
-plus the S1 characterization test.
+Phase 5 / S5 note: ``run_engine`` was thinned into an orchestrator and the
+daily loop (plus its setup) was extracted into ``_simulate_daily`` returning a
+``DailyRunResult``. Pure relocation: the daily accrual, the pre/post-debit
+interest posting order, the Payment/Extra/Lump debit application, and the
+final-payment trim are byte-for-byte the same lines, only moved. No behaviour
+change; the golden master and the S1 characterization test stay green.
 """
 
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -91,36 +93,48 @@ def payment_for_month(
     return last_known_payment_base
 
 
-def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Run the core daily simulation.
+@dataclass
+class DailyRunResult:
+    """Raw output of the daily simulation loop, before any reporting tables.
+
+    Finance note: this is the loan's day-by-day walk handed back before the
+    monthly schedule, the LTV columns, or the bank reconcile are built. It
+    carries the per-day event log and the per-month money totals those reports
+    are assembled from, with nothing pre-aggregated yet.
+
+    Technical note: the explicit contract between ``_simulate_daily`` (the
+    producer) and ``run_engine`` (the consumer), so the orchestrator never
+    reaches into loop internals. ``months`` is the prepared month table the
+    monthly assembly needs; the five dicts are the per-``YYYYMM`` collectors the
+    loop populates (amounts paid, recurring extras, lump sums, interest used,
+    and the annual rate applied each month).
+    """
+    months: pd.DataFrame
+    events: List[Dict]
+    month_paid: Dict[int, float]
+    month_extras: Dict[int, float]
+    month_lumps: Dict[int, float]
+    month_interest_used: Dict[int, float]
+    month_rate: Dict[int, float]
+
+
+def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
+    """Walk the loan day by day, returning the raw event log and month totals.
 
     Finance note: this is the heart of the model. Starting from the drawdown
     balance it accrues interest every day, applies payments, standing extras and
     lump sums, posts interest on the bank's posting day, and mirrors the bank's
-    final-payment trimming so the loan closes at exactly zero. The three tables
-    it returns are the source of the Monthly schedule, the Reconcile sheet, and
-    the daily Events log that everything downstream reports on.
+    final-payment trimming so the loan closes at exactly zero. It produces no
+    report tables itself; it returns the daily events and the per-month money
+    totals that ``run_engine`` then turns into the monthly schedule, LTV
+    columns, and reconcile.
 
-    The function returns three DataFrames:
-
-    ``monthly``
-        Per-month schedule used for reporting and tax computations.
-
-    ``reconcile``
-        A join between modelled and bank events that supports audits and
-        tolerance checks.
-
-    ``events_df``
-        The canonical event log with one row per bank-like transaction
-        generated by the engine.
-
-    Behaviour intentionally mimics observed bank behaviour.  When a set of
-    debits would push the principal below zero we walk the day's transactions
-    backwards trimming amounts so that the closing balance is exactly zero and
-    no further interest is posted that day.
+    Technical note: extracted verbatim from the old ``run_engine`` body in Phase
+    5 / S5. Behaviour intentionally mimics observed bank behaviour. When a set
+    of debits would push the principal below zero we walk the day's
+    transactions backwards trimming amounts so that the closing balance is
+    exactly zero and no further interest is posted that day.
     """
-    # Plain-English progress line for troubleshooting (stderr only; never stdout).
-    print("[engine.simulate] run_engine: starting daily simulation", file=sys.stderr)
     rate_of = build_rate_lookup(inputs.rate_blocks)
     months = month_tables(inputs, actuals)
 
@@ -323,12 +337,57 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
         # Next day --------------------------------------------------------------
         cur += timedelta(days=1)
 
+    # Hand the raw walk back to the orchestrator; no report assembly here.
+    return DailyRunResult(
+        months=months,
+        events=events,
+        month_paid=month_paid,
+        month_extras=month_extras,
+        month_lumps=month_lumps,
+        month_interest_used=month_interest_used,
+        month_rate=month_rate,
+    )
+
+
+def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Run the daily simulation, then build the three reporting tables.
+
+    Finance note: this is the public entry point the tools and tests call. It
+    runs the day-by-day walk (``_simulate_daily``), then assembles the three
+    tables the business reports on: the monthly schedule, the bank-versus-model
+    reconcile, and the daily events log with property value and LTV attached.
+
+    The function returns three DataFrames:
+
+    ``monthly``
+        Per-month schedule used for reporting and tax computations.
+
+    ``reconcile``
+        A join between modelled and bank events that supports audits and
+        tolerance checks.
+
+    ``events_df``
+        The canonical event log with one row per bank-like transaction
+        generated by the engine.
+
+    Technical note: thinned in Phase 5 / S5. The setup and the daily loop now
+    live in ``_simulate_daily``; this function consumes its ``DailyRunResult``
+    and calls ``build_monthly_schedule``, ``property_value_on``, and
+    ``build_reconcile`` in the same order as before, so the returned tuple and
+    its columns are unchanged.
+    """
+    # Plain-English progress line for troubleshooting (stderr only; never stdout).
+    print("[engine.simulate] run_engine: starting daily simulation", file=sys.stderr)
+
+    # Day-by-day walk: events + per-month collectors + the prepared month table.
+    sim = _simulate_daily(inputs, actuals)
+
     # ------------------ Build outputs ------------------
 
     # Event log DataFrame — stable ordering (Payment, Extra, Lump, Interest).
-    if events:
+    if sim.events:
         order = {"Payment": 0, "Extra": 1, "Lump": 2, "Interest": 3}
-        events_df = pd.DataFrame(events)
+        events_df = pd.DataFrame(sim.events)
         events_df["__order"] = events_df["kind"].map(order).fillna(99).astype(int)
         events_df = events_df.sort_values(["date", "__order"]).drop(columns="__order")
     else:
@@ -347,14 +406,14 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     # monthly module.  The per-month collector dicts populated by the daily
     # loop are passed in explicitly so monthly.py never reaches back here.
     monthly = build_monthly_schedule(
-        months,
+        sim.months,
         events_df,
         actuals,
-        month_paid,
-        month_extras,
-        month_lumps,
-        month_interest_used,
-        month_rate,
+        sim.month_paid,
+        sim.month_extras,
+        sim.month_lumps,
+        sim.month_interest_used,
+        sim.month_rate,
     )
 
     # Property value (at EOM) and LTVs ----------------------------------------
