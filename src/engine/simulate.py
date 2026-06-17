@@ -20,12 +20,13 @@ monthly-schedule assembly (``build_monthly_schedule``) now live in
 ``monthly.py`` and are imported via ``from .monthly import ...``. The property
 valuation helpers live in ``valuation.py``.
 
-Phase 5 / S3 note: the monthly cluster (``build_rate_lookup``,
-``derive_modelling_end``, ``month_span``, ``month_tables``) and the post-loop
-monthly-schedule assembly were lifted into ``monthly.py``. Behaviour is
-unchanged; only imports, the relocated definitions, and this header note were
-edited. The golden master still reads 46 passed, 2 skipped, plus the S1
-characterization test.
+Phase 5 / S4 note: the model-vs-bank reconcile cluster (the Payment/Interest
+join, ``diff_model_minus_bank``, and the tolerance labels ``ok_within_1c``,
+``ok_within_abs_eur``, ``ok_label``, ``ok_reason``) was lifted into
+``reconcile.py`` and is imported back via ``from .reconcile import
+build_reconcile``. Behaviour is unchanged; only imports, the relocated block,
+and this note were edited. The golden master still reads 46 passed, 2 skipped,
+plus the S1 characterization test.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from .monthly import (
     month_tables,
     build_monthly_schedule,
 )
+from .reconcile import build_reconcile
 
 
 # =====================================================================
@@ -368,44 +370,10 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
         if "bank_eom_running_balance" in monthly.columns:
             monthly["ltv_bank_eom"] = np.nan
 
-    # Reconcile: join by date + type (avoids mismatches on same date).
-    model_ev = events_df[events_df["kind"].isin(["Payment", "Interest"])].copy()
-    model_ev.rename(columns={
-        "date": "bank_date",
-        "kind": "type",
-        "amount": "model_amount",
-        "balance": "model_balance",
-    }, inplace=True)
-
-    bank_ev = actuals[actuals["type"].isin(["Payment", "Interest"])].copy()
-    bank_ev.rename(columns={"date": "bank_date", "run_balance": "bank_running_balance"}, inplace=True)
-
-    rec = pd.merge(
-        bank_ev,
-        model_ev[["bank_date", "type", "model_amount", "model_balance"]],
-        on=["bank_date", "type"], how="left"
-    )
-
-    # Coerce numerics and compute diffs/tolerance if both sides exist.
-    for c in ("bank_running_balance", "model_balance"):
-        if c in rec.columns:
-            rec[c] = pd.to_numeric(rec[c], errors="coerce")
-
-    if {"bank_running_balance", "model_balance"}.issubset(set(rec.columns)):
-        rec["diff_model_minus_bank"] = rec["model_balance"] - rec["bank_running_balance"]
-
-        # Legacy 1c label (kept for backwards compatibility)
-        rec["ok_within_1c"] = rec["diff_model_minus_bank"].abs().le(0.01).map({True: "OK", False: "CHECK"})
-
-        # NEW: configurable absolute-EUR threshold
-        thr = float(getattr(inputs, "reconcile_ok_abs_eur", 0.01) or 0.01)
-        rec["ok_within_abs_eur"] = rec["diff_model_minus_bank"].abs().le(thr)
-        rec["ok_label"] = rec["ok_within_abs_eur"].map({True: "OK", False: "CHECK"})
-        rec["ok_reason"] = rec.apply(
-            lambda r: (f"|diff|≤€{thr:,.2f}" if pd.notna(r.get("diff_model_minus_bank"))
-                       and abs(float(r["diff_model_minus_bank"])) <= thr else ">threshold"),
-            axis=1
-        )
+    # Reconcile model vs bank events.  The join, the diff, and the
+    # tolerance labels were lifted into reconcile.py in Phase 5 / S4;
+    # behaviour is unchanged.
+    rec = build_reconcile(events_df, actuals, inputs)
 
     # Plain-English completion line for troubleshooting (stderr only).
     print(
