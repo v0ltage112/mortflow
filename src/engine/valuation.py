@@ -12,15 +12,19 @@ revaluation block whenever the inputs pin a new base value from a later date.
 
 Technical summary
 -----------------
-Pure functions, no state. ``_growth_to_decimal`` normalises the growth input
-shape (whole percent vs decimal). ``_months_between`` returns the whole-month
-gap between two dates for compounding. ``property_value_on`` walks the ordered
-list of valuation blocks (implicit drawdown block plus any user overrides) and
-compounds at the active block's growth rate.
+Pure functions, no state. ``property_value_on`` walks the ordered list of
+valuation blocks (implicit drawdown block plus any user overrides) and compounds
+at the active block's growth rate. ``_months_between`` returns the whole-month
+gap between two dates for compounding. The growth-input normaliser lives in
+``helpers.growth_to_decimal`` and is imported.
 
 Phase 5 / S2 note: lifted verbatim out of ``src/engine/simulate.py``. Behaviour
 is unchanged; only the module header and a stderr status line are new. The 46
 passed, 2 skipped golden master plus the S1 characterization test stay green.
+
+Phase 5 / S6 note: the local ``_growth_to_decimal`` was removed and replaced by
+the shared ``helpers.growth_to_decimal`` so the whole-percent-vs-decimal rule
+has a single definition across the package. Behaviour is identical.
 """
 
 from __future__ import annotations
@@ -29,25 +33,8 @@ import sys
 from datetime import date
 from typing import List
 
+from .helpers import growth_to_decimal
 from .schema import Inputs, ValuationBlock
-
-
-def _growth_to_decimal(g: float) -> float:
-    """Normalise growth inputs to a decimal per annum.
-
-    Finance note: an analyst may type growth as ``5`` (meaning 5%) or as
-    ``0.05``. Standardising to a decimal keeps the property-value path correct
-    regardless of how the assumption was entered.
-
-    The project expects users to occasionally express growth in whole
-    percentages (``5`` meaning 5%) while other times providing decimals.
-    Returning a decimal keeps downstream math unambiguous.
-    """
-    try:
-        g = float(g or 0.0)
-    except Exception:
-        g = 0.0
-    return (g / 100.0) if g > 1.0 else g
 
 
 def _months_between(d0: date, d1: date) -> int:
@@ -77,7 +64,7 @@ def property_value_on(inputs: "Inputs", dt: date) -> float:
         return 0.0
 
     eff_blocks: List[ValuationBlock] = []
-    imp_growth = _growth_to_decimal(getattr(inputs, "property_growth_pa", 0.0))
+    imp_growth = growth_to_decimal(getattr(inputs, "property_growth_pa", 0.0))
     eff_blocks.append(ValuationBlock(start=inputs.drawdown_date, base_value=base_price, growth_pa=imp_growth))
 
     if inputs.valuation_blocks:

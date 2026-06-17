@@ -49,7 +49,7 @@ from .helpers import (
     ym_int,
 )
 from .schema import Inputs
-from .valuation import property_value_on, _growth_to_decimal, _months_between
+from .valuation import property_value_on
 from .monthly import (
     build_rate_lookup,
     derive_modelling_end,

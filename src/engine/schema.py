@@ -20,6 +20,11 @@ Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py``
 "Input schema" section. Behaviour is unchanged; only the module header,
 per-function finance notes, and the stderr status line were added. Date and
 month helpers now come from ``.helpers`` instead of being defined alongside.
+
+Phase 5 / S6 note: the local ``_to_dec`` helper that lived inside
+``load_inputs`` was removed; growth normalisation now calls the shared
+``helpers.growth_to_decimal`` so the whole-percent-vs-decimal rule has one
+definition across the package. Behaviour is identical.
 """
 
 from __future__ import annotations
@@ -34,7 +39,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .helpers import ensure_date, ym_int
+from .helpers import ensure_date, ym_int, growth_to_decimal
 
 
 @dataclass
@@ -131,19 +136,14 @@ def load_inputs(path: Path) -> Inputs:
     vblocks_raw = (loan.get("valuation_blocks") or [])
     vblocks: List[ValuationBlock] = []
 
-    def _to_dec(g):
-        try:
-            g = float(g or 0.0)
-        except Exception:
-            g = 0.0
-        return (g / 100.0) if g > 1.0 else g
-
     for vb in vblocks_raw:
         vblocks.append(
             ValuationBlock(
                 start=ensure_date(vb["start"]),
                 base_value=float(vb["value"]),
-                growth_pa=_to_dec(vb.get("growth_pa", loan.get("property_growth_pa", 0.0))),
+                # Growth normalisation now lives in helpers.growth_to_decimal
+                # (one definition shared by schema, valuation, and the CLI).
+                growth_pa=growth_to_decimal(vb.get("growth_pa", loan.get("property_growth_pa", 0.0))),
             )
         )
     vblocks = sorted(vblocks, key=lambda b: b.start)
