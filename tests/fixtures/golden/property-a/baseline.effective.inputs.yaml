@@ -42,16 +42,6 @@ bank:
     end: 2024-07-31
     mode: interest_only
     capitalise: true
-tax:
-  enabled: true
-  jurisdiction: IE
-  tenancy_file: tenancy.local.yaml
-  use_posting_date_for_year: true
-  deductible_percentage_by_year:
-    default: 1.0
-  deductible_windows: []
-  audit:
-    write_monthly: true
 reconcile:
   ok_abs_eur: 300.0
   snapshots:
@@ -70,3 +60,13 @@ output:
 modelling:
   end_date: 2059-04-05
   day_count: ACT/365
+tax:
+  enabled: true
+  jurisdiction: IE
+  tenancy_file: tenancy.local.yaml
+  use_posting_date_for_year: true
+  deductible_percentage_by_year:
+    default: 1.0
+  deductible_windows: []
+  audit:
+    write_monthly: true
