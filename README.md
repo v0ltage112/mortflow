@@ -34,7 +34,15 @@ mortflow/
 │       └── inputs.sample.yaml
 ├── data/                       # Your real data (gitignored — never committed)
 ├── src/
-│   ├── engine.py               # Core daily engine + CLI
+│   ├── engine/                 # Core daily ACT/365 engine package
+│   │   ├── __init__.py         # Re-export facade: the public API (run_engine, loaders, dataclasses)
+│   │   ├── __main__.py         # CLI entry point (python -m src.engine)
+│   │   ├── helpers.py          # Generic date + numeric helpers (incl. growth_to_decimal)
+│   │   ├── schema.py           # Input dataclasses + YAML/CSV loaders
+│   │   ├── valuation.py        # Property value + LTV helpers
+│   │   ├── monthly.py          # Rate lookup, month scaffolding, monthly schedule
+│   │   ├── reconcile.py        # Model-vs-bank reconcile + tolerance labels
+│   │   └── simulate.py         # Daily simulation loop + run_engine orchestrator
 │   ├── metrics.py              # Portfolio KPI helpers
 │   ├── paths.py                # Data/output path resolver (config layer)
 │   └── tax.py                  # Tenancy loader + Form 11 logic
@@ -223,49 +231,13 @@ Remove those months from the tenancy file or configure `deductible_window` range
 
 ---
 
-## 📊 Tests
-
-The pytest suite covers reconciliation tolerances, interest accrual, valuation blocks, tax schedules, KPI calculations, path resolution, and regression guards around merge-extra behaviour.
-
-```
-
-pytest -q
-
-```
-
-Expected: **28 passed, 2 skipped, 0 failed**.
-
-Run the tests after dependency updates or when you change the engine/tax logic to ensure both the financial maths and tax outputs stay within contract tolerances.
-
----
-
-## ❓ FAQ
-
-**Where does the engine read data and write outputs?**
-From the first configured source: a CLI flag, then `MORTGAGE_DATA_DIR` / `MORTGAGE_OUT_DIR`, then `paths.local.yaml`, then the bundled `./data_sample` and `./out`. See Data & output locations.
-
-**Can I skip the tax outputs?**
-Set `tax.enabled: false` in `inputs.yaml`. The engine will still generate the mortgage schedules while omitting tax sheets.
-
-**Where does the occupancy ratio come from?**
-Occupancy is derived from `tenancy.local.yaml` (days let vs available) and is combined with the tax configuration to compute deductible percentages.
-
-**How are RPZ limits handled?**
-Include an `rpz:` block per tenancy with historical rent and HICP data. The module stores the details today and will feed future rent projections.
-
-**What about owner-occupied periods?**
-Remove those months from the tenancy file or configure `deductible_window` ranges in `inputs.yaml` so tax only applies when the property was let or available for letting under section 97(2J) TCA 1997.
-
----
-
  ## 🪜 Version history
- 
- | Version | Date | Highlights |
- | --- | --- | --- |
+
+| Version | Date | Highlights |
+| --- | --- | --- |
 | v1.4.0 | 2026-06-15 | Initial public release. Daily ACT/365 engine, anonymised sample data, PolyForm Noncommercial licence. |
 | v1.5.0 | 2026-06-16 | Verification & behaviour lock: golden-master snapshot test, pinned dependencies. |
- 
- ## 📄 Licence
+| v1.6.0 | 2026-06-17 | engine.py refactored into a src/engine/ package behind a re-export facade; run_engine decomposed into simulate / monthly / reconcile / valuation; helper dedupe and dead-import cleanup. No behaviour change. |
 
 ---
 
@@ -274,4 +246,3 @@ Remove those months from the tenancy file or configure `deductible_window` range
 PolyForm Noncommercial License 1.0.0. Free for personal and non-commercial use.
 Commercial use requires a separate written agreement with the author.
 See `LICENSE` for full terms or contact: a.a.madras@gmail.com
-```
