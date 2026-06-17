@@ -45,9 +45,11 @@ from .schema import (
     load_actuals,
 )
 
-# Simulation: valuation, monthly scaffolding, and the core engine.
+# Valuation helpers (extracted in Phase 5 / S2).
+from .valuation import property_value_on
+
+# Simulation: monthly scaffolding, payment helper, and the core engine.
 from .simulate import (
-    property_value_on,
     build_rate_lookup,
     derive_modelling_end,
     month_span,

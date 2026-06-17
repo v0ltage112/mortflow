@@ -3,27 +3,27 @@
 
 Finance-readable summary
 ------------------------
-This module is the engine room. It works out what the property is worth on any
-given day, turns the raw bank activity into a tidy month-by-month picture, and
-then walks the loan day by day to produce the canonical numbers the business
-reports: the daily event log, the monthly schedule (interest, principal,
-balances, LTV), and the bank-versus-model reconciliation. Almost every final
-figure in the workbook originates here, so its behaviour is locked and changed
-only with great care.
+This module is the simulation engine. It turns the raw bank activity into
+a tidy month-by-month picture, then walks the loan day by day to produce
+the canonical numbers the business reports: the daily event log, the
+monthly schedule (interest, principal, balances, and LTV), and the
+bank-versus-model reconciliation. Property values used for LTV are now
+calculated in ``valuation.py`` and imported back into ``run_engine`` so
+the LTV columns continue to reconcile.
 
 Technical summary
 -----------------
-Holds the property-value helpers (``_growth_to_decimal``, ``_months_between``,
-``property_value_on``), the monthly scaffolding (``build_rate_lookup``,
+Holds the monthly scaffolding (``build_rate_lookup``,
 ``derive_modelling_end``, ``month_span``, ``month_tables``), the scheduled
-payment helper (``payment_for_month``), and the daily simulator (``run_engine``).
+payment helper (``payment_for_month``), and the daily simulator
+(``run_engine``). The property valuation helpers live in ``valuation.py``
+and are imported via ``from .valuation import property_value_on, ...``.
 
-Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py``. This
-is the transitional parking module: it stays intact through S1-S4 and only
-thins at S5 when individual phases are extracted. Behaviour is unchanged; only
-the module header, per-function finance notes, and stderr status lines were
-added. The valuation cluster is intentionally kept here (rather than in
-``helpers``) so it can be lifted cleanly into ``valuation.py`` at S2.
+Phase 5 / S2 note: the valuation cluster (``_growth_to_decimal``,
+``_months_between``, ``property_value_on``) was lifted into ``valuation.py``.
+Behaviour is unchanged; only imports and the module header note were
+edited. The golden master still reads 46 passed, 2 skipped, plus the S1
+characterization test.
 """
 
 from __future__ import annotations
@@ -44,76 +44,8 @@ from .helpers import (
     pmt,
     ym_int,
 )
-from .schema import Inputs, RateBlock, ValuationBlock
-
-
-# ---------------------------------------------------------------------
-# Property value & LTV helpers
-# ---------------------------------------------------------------------
-
-def _growth_to_decimal(g: float) -> float:
-    """Normalise growth inputs to a decimal per annum.
-
-    Finance note: an analyst may type growth as ``5`` (meaning 5%) or as
-    ``0.05``. Standardising to a decimal keeps the property-value path correct
-    regardless of how the assumption was entered.
-
-    The project expects users to occasionally express growth in whole
-    percentages (``5`` meaning 5%) while other times providing decimals.
-    Returning a decimal keeps downstream math unambiguous.
-    """
-    try:
-        g = float(g or 0.0)
-    except Exception:
-        g = 0.0
-    return (g / 100.0) if g > 1.0 else g
-
-
-def _months_between(d0: date, d1: date) -> int:
-    """Return the whole-month gap between two dates.
-
-    Finance note: property growth compounds per year, so the number of months
-    since the last valuation decides how much the value has grown by ``d1``.
-    """
-    return (d1.year - d0.year) * 12 + (d1.month - d0.month)
-
-def property_value_on(inputs: "Inputs", dt: date) -> float:
-    """Return the modelled property valuation on ``dt``.
-
-    Finance note: this is the property value used for loan-to-value. It starts
-    from the purchase price at drawdown and grows at the assumed rate, unless a
-    revaluation block pins a new value from a later date. LTV (balance / value)
-    depends directly on this number.
-
-    The valuation logic supports "revaluation blocks" where a user pins a new
-    base value and growth rate from a particular date.  The implicit block at
-    drawdown captures the original purchase price so that the behaviour is
-    consistent whether or not custom blocks are provided.
-    """
-    base_price = float(inputs.property_price or 0.0)
-    if base_price <= 0.0:
-        return 0.0
-
-    eff_blocks: List[ValuationBlock] = []
-    imp_growth = _growth_to_decimal(getattr(inputs, "property_growth_pa", 0.0))
-    eff_blocks.append(ValuationBlock(start=inputs.drawdown_date, base_value=base_price, growth_pa=imp_growth))
-
-    if inputs.valuation_blocks:
-        eff_blocks.extend(inputs.valuation_blocks)
-        eff_blocks = sorted(eff_blocks, key=lambda b: b.start)
-
-    active = None
-    for b in eff_blocks:
-        if b.start <= dt:
-            active = b
-        else:
-            break
-
-    if active is None:
-        return base_price
-
-    months = _months_between(active.start, dt)
-    return float(active.base_value * ((1.0 + active.growth_pa) ** (months / 12.0)))
+from .schema import Inputs, RateBlock
+from .valuation import property_value_on, _growth_to_decimal, _months_between
 
 
 # =====================================================================
@@ -634,4 +566,4 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     return monthly, rec, events_df
 
 
-print("[engine.simulate] valuation, scaffolding and engine ready", file=sys.stderr)
+print("[engine.simulate] scaffolding and engine ready", file=sys.stderr)
