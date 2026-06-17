@@ -7,20 +7,27 @@ This module is the small toolbox of date and arithmetic helpers the engine
 leans on. It runs before any mortgage logic and does not, by itself, produce a
 final reported number. What it guarantees is the plumbing: every date becomes a
 real calendar date, month-ends and payment days are always valid, the monthly
-payment formula (PMT) behaves like a bank spreadsheet, and the day-count
-divisor matches the loan's interest convention. If any of these were wrong,
-every downstream figure (interest, balance, LTV) would silently inherit the
-error, so keeping this layer clean protects the whole model.
+payment formula (PMT) behaves like a bank spreadsheet, the day-count divisor
+matches the loan's interest convention, and a growth assumption is read the same
+way (whole percent or decimal) everywhere it is used. If any of these were
+wrong, every downstream figure (interest, balance, LTV) would silently inherit
+the error, so keeping this layer clean protects the whole model.
 
 Technical summary
 -----------------
 Pure, mortgage-unaware functions: date normalisation, month arithmetic, an
-Excel-style PMT, and the day-count divisor. No project state lives here, which
-keeps the module a safe dependency-free leaf.
+Excel-style PMT, the day-count divisor, and the growth-input normaliser. No
+project state lives here, which keeps the module a safe dependency-free leaf.
 
 Phase 5 / S1 note: this file was lifted verbatim out of the original
 ``src/engine.py`` "Helpers" section. Behaviour is unchanged; only the module
 header, per-function finance notes, and the stderr status line were added.
+
+Phase 5 / S6 note: ``growth_to_decimal`` was added here as the single home for
+the whole-percent-vs-decimal rule that previously existed as three copies
+(``_growth_to_decimal`` in valuation.py, ``_to_dec`` inside
+``schema.load_inputs``, and an inline coercion in __main__.py). Behaviour is
+identical; the duplicates now call this one function.
 """
 
 from __future__ import annotations
@@ -122,6 +129,25 @@ def day_count_divisor(label: str) -> float:
     if lab in {"ACT/360", "30/360"}:
         return 360.0
     return 365.0
+
+
+def growth_to_decimal(g) -> float:
+    """Normalise an annual growth input to a decimal per annum.
+
+    Finance note: an analyst may type growth as ``5`` (meaning 5%) or as
+    ``0.05``. Standardising to a decimal keeps the property-value path correct
+    regardless of how the assumption was entered. This is the single source of
+    truth for that rule: the schema loader, the valuation module, and the CLI
+    summary all call it so the same number is produced everywhere.
+    """
+    # Coerce defensively: growth arrives from YAML/CSV as a string, number, or
+    # None, so a bad value must degrade to "no growth" rather than raise.
+    try:
+        g = float(g or 0.0)
+    except Exception:
+        g = 0.0
+    # A value above 1.0 is read as a whole percent (5 -> 0.05); 0.05 stays as is.
+    return (g / 100.0) if g > 1.0 else g
 
 
 # Plain-English status line for troubleshooting; stderr only so the CLI's stdout

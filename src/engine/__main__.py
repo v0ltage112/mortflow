@@ -17,13 +17,19 @@ calls ``run_engine``, derives summary/portal metrics, and writes XLSX + CSV
 artefacts (plus optional tax outputs).
 
 Phase 5 / S1 note: ``main()`` was relocated verbatim from the original
-``src/engine.py`` CLI section. The only necessary change is the relative depth
-of the optional tax/paths imports: because this module now sits one level
-deeper (``src/engine/__main__.py``), ``.tax``/``.paths`` become ``..tax``/
-``..paths`` so they still resolve to ``src.tax``/``src.paths`` and keep
-``python -m src.engine`` working (the portfolio golden-master shells out to it).
-The try/except structure and the bare ``from tax``/``from paths`` fallbacks are
-preserved and intentionally not collapsed (that is deferred to S6).
+``src/engine.py`` CLI section, raising the optional tax/paths import depth from
+``.tax``/``.paths`` to ``..tax``/``..paths`` because this module sits one level
+deeper (``src/engine/__main__.py``); ``..tax``/``..paths`` still resolve to
+``src.tax``/``src.paths`` and keep ``python -m src.engine`` working (the
+portfolio golden master shells out to it).
+
+Phase 5 / S6 note: the dead-import noise is gone. The optional tax/paths imports
+were nested ``try/except`` blocks whose inner ``try`` repeated the same ``..``
+import and whose final ``except`` fell back to a bare ``from tax``/``from
+paths`` that never resolved once the package layout settled. They are now single
+relative imports. The growth coercion in the property-value path was also routed
+through ``helpers.growth_to_decimal`` to share one definition with the schema
+loader and the valuation module.
 """
 
 from __future__ import annotations
@@ -36,37 +42,18 @@ import pandas as pd
 import yaml
 from openpyxl.styles import Font
 
-from .helpers import ensure_date
+from .helpers import ensure_date, growth_to_decimal
 from .schema import load_inputs, load_actuals
 from .simulate import run_engine
 from .report import _add_table, _format_sheet, compute_portal_style_metrics
 
-# Tax module import that works both when:
-# - tests import as package (from src.engine import ...), and
-# - you run as a module (python -m src.engine)
-# NOTE (Phase 5 / S1): relative depth raised from .tax to ..tax because this
-# file moved from src/engine.py to src/engine/__main__.py.  ..tax still means
-# src.tax, which keeps python -m src.engine working for the portfolio golden master.
-try:
-    from ..tax import load_tenancies, compute_tax_year_table  # package context
-except Exception:  # pragma: no cover
-    try:
-        from ..tax import load_tenancies, compute_tax_year_table
-    except Exception:
-        from tax import load_tenancies, compute_tax_year_table
-
-# Phase 2 path resolver.  Output and tenancy locations are resolved through the
-# config layer (src/paths.py) instead of being assumed relative to the current
-# working directory.  The import mirrors the tax-module fallback above so the
-# module works both as a package (python -m src.engine) and as a loose script.
-# NOTE (Phase 5 / S1): relative depth raised from .paths to ..paths for the same reason.
-try:
-    from ..paths import resolve_out_dir, resolve_relative  # package context
-except Exception:  # pragma: no cover
-    try:
-        from ..paths import resolve_out_dir, resolve_relative
-    except Exception:
-        from paths import resolve_out_dir, resolve_relative
+# Tax and path-resolver modules live one level up in ``src``.  The package always
+# runs as ``src.engine`` (pytest imports it as a package and python -m src.engine
+# runs it as one), so a single relative import resolves in every supported entry
+# path.  The Phase 5 / S1 nested try/except blocks with bare ``from tax``/``from
+# paths`` fallbacks were dead once the layout settled and were removed in S6.
+from ..tax import load_tenancies, compute_tax_year_table
+from ..paths import resolve_out_dir, resolve_relative
 
 
 def main():
@@ -164,13 +151,13 @@ def main():
         if not hit.empty:
             cur_rate = float(hit.iloc[0]["annual_rate"])
 
-    # Property value path (coerce 1.00 ↦ 1% if user wrote percent)
+    # Property value path (coerce 1.00 to 1% if user wrote percent)
     prop_val = None
     ltv = None
     try:
-        growth = float(inputs.property_growth_pa or 0.0)
-        if growth > 1.0:
-            growth = growth / 100.0
+        # Normalise the growth assumption through the shared helper so the CLI
+        # summary uses the same whole-percent-vs-decimal rule as the engine.
+        growth = growth_to_decimal(inputs.property_growth_pa)
         if asof_date is not None:
             m_since = (pd.Timestamp(asof_date).year - inputs.drawdown_date.year) * 12 + (
                 pd.Timestamp(asof_date).month - inputs.drawdown_date.month
@@ -206,7 +193,9 @@ def main():
 
         # monthly audit only when tax is enabled
         if (tax_cfg.get("audit") or {}).get("write_monthly", True):
-            from src.tax import compute_tax_monthly_audit
+            # Imported lazily because it is only needed when the monthly tax
+            # audit is switched on; ..tax matches the top-of-file imports.
+            from ..tax import compute_tax_monthly_audit
             tax_audit_df = compute_tax_monthly_audit(monthly, raw_cfg, tenancies, policy)
 
     # ---- Write outputs ----
@@ -329,7 +318,7 @@ def main():
             k = ws_s.cell(row=r, column=1).value
             v = ws_s.cell(row=r, column=2)
             if k in money_keys:
-                v.number_format = "€#,##0.00"
+                v.number_format = "\u20ac#,##0.00"
             if k in pct_keys:
                 v.number_format = "0.00%"
             if k in date_keys:
