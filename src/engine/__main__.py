@@ -30,6 +30,15 @@ paths`` that never resolved once the package layout settled. They are now single
 relative imports. The growth coercion in the property-value path was also routed
 through ``helpers.growth_to_decimal`` to share one definition with the schema
 loader and the valuation module.
+
+Phase 6 / S3 note: the CLI now branches on the property kind. A no-mortgage
+property (``meta.mortgage_enabled`` False) has no loan schedule, reconcile, or
+tax to run, so it is routed to ``valuation_only.run_valuation_only`` which
+writes a minimal value-over-time output and returns. ``--actuals`` is therefore
+optional at the parser level (a valuation-only property has no bank statement);
+a mortgage-enabled property that omits it still errors. Mortgage-bearing
+properties skip the branch and run exactly as before, so the Gandon golden
+master path is byte-for-byte unchanged.
 """
 
 from __future__ import annotations
@@ -46,6 +55,10 @@ from .helpers import ensure_date, growth_to_decimal
 from .schema import load_inputs, load_actuals
 from .simulate import run_engine
 from .report import _add_table, _format_sheet, compute_portal_style_metrics
+# Phase 6 / S3: the no-mortgage valuation-only path. Imported here (not in
+# __init__) to keep the package facade minimal; no circular import because
+# valuation_only depends only on helpers/schema/valuation/monthly/report.
+from .valuation_only import run_valuation_only
 
 # Tax and path-resolver modules live one level up in ``src``.  The package always
 # runs as ``src.engine`` (pytest imports it as a package and python -m src.engine
@@ -74,7 +87,10 @@ def main():
 
     ap = argparse.ArgumentParser(description="Daily mortgage engine (ACT/365)")
     ap.add_argument("--inputs", type=Path, required=True, help="Path to inputs.yaml")
-    ap.add_argument("--actuals", type=Path, required=True, help="Path to actuals.csv")
+    # --actuals is optional at the parser level so a no-mortgage (valuation-only)
+    # property can omit it. A mortgage-enabled property that omits it still
+    # errors below, preserving the original contract for the loan path.
+    ap.add_argument("--actuals", type=Path, required=False, default=None, help="Path to actuals.csv (required for a mortgage property)")
     # --out is optional now.  When omitted, the output folder is resolved through
     # the Phase 2 config layer (CLI > MORTGAGE_OUT_DIR > paths.local.yaml > <repo>/out).
     ap.add_argument("--out", type=Path, default=None, help="Output folder (overrides config)")
@@ -86,12 +102,33 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     inputs = load_inputs(args.inputs)
+
+    # Phase 6 / S3: a no-mortgage property has no loan schedule, reconcile, or
+    # tax to run. Branch to the valuation-only path, which writes a minimal
+    # value-over-time output and returns. Mortgage-bearing properties skip this
+    # block entirely and run exactly as before (the Gandon golden master path).
+    meta = inputs.meta
+    if meta is not None and not meta.mortgage_enabled:
+        if not meta.valuation_enabled:
+            # Mortgage off and valuation off means there is nothing to compute.
+            ap.error("property has neither mortgage nor valuation enabled; nothing to run")
+        run_valuation_only(inputs, args.inputs, out_dir)
+        # Completion line mirrors the mortgage path for consistent troubleshooting.
+        print("[engine.__main__] CLI run complete", file=sys.stderr)
+        return
+
+    # A mortgage-enabled property must have a bank-actuals CSV to reconcile
+    # against; --actuals is optional at the parser level only so the valuation-
+    # only path above can omit it.
+    if args.actuals is None:
+        ap.error("--actuals is required for a mortgage-enabled property")
+
     actuals = load_actuals(args.actuals)
 
     # Core engine run ---------------------------------------------------------
     monthly, reconcile, events = run_engine(inputs, actuals)
 
-    # ---- Derive "as-of" and quick summary stats for Summary sheet
+    # ---- Derive \"as-of\" and quick summary stats for Summary sheet
     rec_non_na = (
         reconcile.dropna(subset=["model_balance"]) if "model_balance" in reconcile.columns else reconcile.copy()
     )
