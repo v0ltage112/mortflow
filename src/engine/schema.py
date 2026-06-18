@@ -13,8 +13,9 @@ would be wrong, so this layer is deliberately strict and explicit.
 
 Technical summary
 -----------------
-Dataclasses ``RateBlock``, ``ValuationBlock``, ``PropertyMeta`` and ``Inputs``
-plus the ``load_inputs`` (YAML) and ``load_actuals`` (CSV) loaders.
+Dataclasses ``RateBlock``, ``ValuationBlock``, ``PropertyMeta``, ``OutputConfig``,
+``PaymentHoliday`` and ``Inputs`` plus the ``load_inputs`` (YAML) and
+``load_actuals`` (CSV) loaders.
 
 Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py``
 "Input schema" section. Behaviour is unchanged; only the module header,
@@ -32,12 +33,18 @@ loader now reads the previously ignored ``meta`` block, tolerates a missing
 ``loan`` block when the mortgage module is off (no crash on an owned-outright
 property), and parses YAML through a strict loader that raises on duplicate
 mapping keys instead of silently keeping the last block. Behaviour is unchanged
-for a mortgage-on, tax-on investment property such as Property A: with a
-``loan`` block present and the kind defaulting to ``investment``, the resolved
-Inputs are identical to Phase 5. The one companion requirement is that a file
-must not contain two blocks with the same key (for example two ``tax:``
-blocks); the strict loader rejects that, so the sample and real configs keep a
-single canonical ``tax:`` block.
+for a mortgage-on, tax-on investment property such as Property A.
+
+Phase 6 / S4 note: two previously ignored blocks are now read. The ``output``
+block is parsed into ``OutputConfig`` (write the workbook, write the CSVs,
+include the daily events, currency, locale) and the writer path honours it; the
+``bank.payment_holidays`` block is parsed and validated into ``PaymentHoliday``
+records but is *not yet applied* to the schedule (parse-and-defer). Every default
+reproduces the pre-S4 behaviour exactly: a file with no ``output`` block writes
+the same artefacts as before, with euro formatting, and a parsed-only payment-
+holiday window changes no figure, so Gandon's golden master stays green.
+Activating payment holidays is a separate, validated change with a golden
+re-baseline.
 """
 
 from __future__ import annotations
@@ -93,6 +100,11 @@ _KIND_ALIASES: Dict[str, str] = {
 # investment property with mortgage, tax, and valuation all on.
 DEFAULT_KIND = "investment"
 
+# Phase 6 / S4: recognised payment-holiday modes. Parsed and validated but not
+# yet applied to the schedule (parse-and-defer), so a typo is caught early while
+# behaviour stays locked.
+_VALID_PAYMENT_HOLIDAY_MODES = {"interest_only", "full_deferral"}
+
 
 @dataclass
 class RateBlock:
@@ -142,6 +154,41 @@ class PropertyMeta:
 
 
 @dataclass
+class OutputConfig:
+    """Which output artefacts to write and how to format money.
+
+    Finance note: these switches decide what the run leaves on disk and how
+    currency is shown. They do not change a single modelled figure; they only
+    gate which files appear and which currency symbol the workbook uses. The
+    defaults match what the engine wrote before these knobs were honoured, so an
+    unchanged config produces an unchanged set of files.
+    """
+
+    write_excel: bool = True            # write the .xlsx workbook
+    write_csv: bool = True              # write the .csv artefacts
+    include_daily_events: bool = True   # include the daily events sheet + events_daily.csv
+    currency: str = "EUR"               # ISO code; selects the workbook money symbol
+    locale: str = "en_IE"               # locale tag; recorded (see note below)
+
+
+@dataclass
+class PaymentHoliday:
+    """A bank payment-holiday window (parsed and validated, not yet applied).
+
+    Finance note: a payment holiday is a period where the borrower pays reduced
+    or no instalments and unpaid interest may be capitalised. Activating one
+    changes the early-month figures and therefore the locked golden master, so
+    Phase 6 deliberately only reads and validates the block. Turning it into
+    real schedule behaviour is a separate, validated, re-baselined change.
+    """
+
+    start: date          # first day of the holiday window
+    end: date            # last day of the holiday window (inclusive)
+    mode: str            # 'interest_only' | 'full_deferral'
+    capitalise: bool     # whether unpaid interest is added to the balance
+
+
+@dataclass
 class Inputs:
     """Canonical representation of the YAML modelling configuration.
 
@@ -177,6 +224,12 @@ class Inputs:
     # Phase 6 / S2: identity + module toggles. Optional default keeps the
     # dataclass field order valid; load_inputs always populates it.
     meta: Optional[PropertyMeta] = None
+    # Phase 6 / S4: output artefact switches + currency/locale. Optional default
+    # keeps the dataclass field order valid; load_inputs always populates it.
+    output: OutputConfig = field(default_factory=OutputConfig)
+    # Phase 6 / S4: parsed-and-validated payment-holiday windows. Not applied to
+    # the schedule yet (parse-and-defer); kept so a future phase can activate it.
+    payment_holidays: List[PaymentHoliday] = field(default_factory=list)
 
 
 def _resolve_kind(raw_kind: Optional[str]) -> str:
@@ -230,6 +283,72 @@ def _resolve_meta(raw: dict) -> PropertyMeta:
         tax_enabled=_toggle("tax"),
         valuation_enabled=_toggle("valuation"),
     )
+
+
+def _resolve_output(raw: dict) -> OutputConfig:
+    """Build :class:`OutputConfig` from the optional ``output`` block.
+
+    Finance note: reads the output switches an analyst can set (write the
+    workbook, write the CSVs, include the daily-events detail, pick a currency
+    and locale). Every default reproduces the pre-S4 behaviour, so a file with no
+    ``output`` block, or one that omits a key, writes exactly what the engine
+    wrote before these knobs were honoured.
+    """
+    out_raw = (raw.get("output") or {})
+
+    def _flag(name: str, default: bool) -> bool:
+        # A missing key inherits the behaviour-preserving default; an explicit
+        # value is coerced so 'true'/1/yes/on all read as True.
+        val = out_raw.get(name)
+        if val is None:
+            return default
+        if isinstance(val, str):
+            return val.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(val)
+
+    # Currency is recorded upper-cased and locale as-is; empty or missing values
+    # fall back to the euro/Irish defaults that match today's behaviour.
+    currency = str(out_raw.get("currency") or "EUR").strip().upper()
+    locale = str(out_raw.get("locale") or "en_IE").strip()
+
+    return OutputConfig(
+        write_excel=_flag("write_excel", True),
+        write_csv=_flag("write_csv", True),
+        include_daily_events=_flag("include_daily_events", True),
+        currency=currency,
+        locale=locale,
+    )
+
+
+def _resolve_payment_holidays(bank_cfg: dict) -> List[PaymentHoliday]:
+    """Parse and validate ``bank.payment_holidays`` without applying it.
+
+    Finance note: reads each declared payment-holiday window and checks it is
+    well formed (a real date range and a recognised mode) so a typo is caught
+    early. Phase 6 stops here on purpose: the windows are not yet fed into the
+    schedule, because doing so would move Gandon's locked early-month figures.
+    Activation is a separate, validated change with a golden re-baseline.
+    """
+    holidays: List[PaymentHoliday] = []
+    for ph in (bank_cfg.get("payment_holidays") or []):
+        # A window must carry both ends; a half-open window is a config error.
+        start = ensure_date(ph["start"])
+        end = ensure_date(ph["end"])
+        if end < start:
+            raise ValueError(
+                f"payment holiday end {end} is before start {start}; "
+                "fix the window in the bank block"
+            )
+        mode = str(ph.get("mode", "interest_only")).strip().lower()
+        if mode not in _VALID_PAYMENT_HOLIDAY_MODES:
+            raise ValueError(
+                f"unknown payment-holiday mode {mode!r}; "
+                f"use one of {sorted(_VALID_PAYMENT_HOLIDAY_MODES)}"
+            )
+        # 'capitalise' defaults to True: unpaid interest is normally rolled up.
+        capitalise = bool(ph.get("capitalise", True))
+        holidays.append(PaymentHoliday(start=start, end=end, mode=mode, capitalise=capitalise))
+    return holidays
 
 
 class _StrictLoader(yaml.SafeLoader):
@@ -317,6 +436,17 @@ def load_inputs(path: Path) -> Inputs:
     else:
         merge_mode = "auto"
 
+    # Phase 6 / S4: output artefact switches + currency/locale. Defaults
+    # reproduce the pre-S4 behaviour, so an unchanged config writes unchanged
+    # files.
+    output_cfg = _resolve_output(raw)
+
+    # Phase 6 / S4: payment-holiday windows are parsed and validated but not yet
+    # applied to the schedule (parse-and-defer). Reading them here keeps the one
+    # validation point with the rest of the loader; activation moves the golden
+    # master and is a separate, validated change.
+    payment_holidays = _resolve_payment_holidays(bank_cfg)
+
     # Optional property valuation blocks (re/valuations + growth regime changes)
     vblocks_raw = (loan.get("valuation_blocks") or [])
     vblocks: List[ValuationBlock] = []
@@ -371,6 +501,8 @@ def load_inputs(path: Path) -> Inputs:
         reconcile_ok_abs_eur=ok_abs,
         posting_order=post_ord,
         meta=meta,
+        output=output_cfg,
+        payment_holidays=payment_holidays,
     )
 
 

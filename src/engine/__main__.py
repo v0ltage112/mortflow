@@ -20,25 +20,23 @@ Phase 5 / S1 note: ``main()`` was relocated verbatim from the original
 ``src/engine.py`` CLI section, raising the optional tax/paths import depth from
 ``.tax``/``.paths`` to ``..tax``/``..paths`` because this module sits one level
 deeper (``src/engine/__main__.py``); ``..tax``/``..paths`` still resolve to
-``src.tax``/``src.paths`` and keep ``python -m src.engine`` working (the
-portfolio golden master shells out to it).
+``src.tax``/``src.paths`` and keep ``python -m src.engine`` working.
 
-Phase 5 / S6 note: the dead-import noise is gone. The optional tax/paths imports
-were nested ``try/except`` blocks whose inner ``try`` repeated the same ``..``
-import and whose final ``except`` fell back to a bare ``from tax``/``from
-paths`` that never resolved once the package layout settled. They are now single
-relative imports. The growth coercion in the property-value path was also routed
-through ``helpers.growth_to_decimal`` to share one definition with the schema
-loader and the valuation module.
+Phase 5 / S6 note: the dead-import noise is gone and the property-value growth
+coercion is routed through ``helpers.growth_to_decimal``.
 
-Phase 6 / S3 note: the CLI now branches on the property kind. A no-mortgage
-property (``meta.mortgage_enabled`` False) has no loan schedule, reconcile, or
-tax to run, so it is routed to ``valuation_only.run_valuation_only`` which
-writes a minimal value-over-time output and returns. ``--actuals`` is therefore
-optional at the parser level (a valuation-only property has no bank statement);
-a mortgage-enabled property that omits it still errors. Mortgage-bearing
-properties skip the branch and run exactly as before, so the Gandon golden
-master path is byte-for-byte unchanged.
+Phase 6 / S3 note: the CLI branches on the property kind. A no-mortgage property
+(``meta.mortgage_enabled`` False) is routed to ``valuation_only.run_valuation_only``;
+``--actuals`` is optional at the parser level but still required for a mortgage
+property. Mortgage-bearing properties run exactly as before.
+
+Phase 6 / S4 note: the writer path now honours the parsed ``output`` block.
+``write_excel`` gates the workbook, ``write_csv`` gates the CSV artefacts,
+``include_daily_events`` gates both the EventsDaily sheet and ``events_daily.csv``,
+and ``currency`` selects the money mask via ``report.money_number_format``. Every
+default is on with euro formatting, so an unchanged config writes byte-identical
+outputs and the Gandon golden master stays green. The stdout "Wrote outputs to:"
+line is unchanged.
 """
 
 from __future__ import annotations
@@ -54,17 +52,15 @@ from openpyxl.styles import Font
 from .helpers import ensure_date, growth_to_decimal
 from .schema import load_inputs, load_actuals
 from .simulate import run_engine
-from .report import _add_table, _format_sheet, compute_portal_style_metrics
+# Phase 6 / S4: money_number_format turns the output.currency knob into the Excel
+# money mask; it defaults to the original euro mask for EUR.
+from .report import _add_table, _format_sheet, compute_portal_style_metrics, money_number_format
 # Phase 6 / S3: the no-mortgage valuation-only path. Imported here (not in
 # __init__) to keep the package facade minimal; no circular import because
 # valuation_only depends only on helpers/schema/valuation/monthly/report.
 from .valuation_only import run_valuation_only
 
-# Tax and path-resolver modules live one level up in ``src``.  The package always
-# runs as ``src.engine`` (pytest imports it as a package and python -m src.engine
-# runs it as one), so a single relative import resolves in every supported entry
-# path.  The Phase 5 / S1 nested try/except blocks with bare ``from tax``/``from
-# paths`` fallbacks were dead once the layout settled and were removed in S6.
+# Tax and path-resolver modules live one level up in ``src``.
 from ..tax import load_tenancies, compute_tax_year_table
 from ..paths import resolve_out_dir, resolve_relative
 
@@ -219,10 +215,6 @@ def main():
         # Tax computations are optional and live in ``src.tax``.  They reuse the
         # monthly schedule produced earlier and therefore inherit the same
         # assumptions as the engine.
-        # Resolve tenancy files relative to the inputs.yaml folder so they live
-        # beside each property's config instead of a cwd-relative data/ folder.
-        # resolve_relative leaves absolute paths untouched, so explicit absolute
-        # overrides still work.
         pref = resolve_relative(args.inputs, tax_cfg.get("tenancy_file", "tenancy.local.yaml"))
         fb = resolve_relative(args.inputs, "tenancy.sample.yaml")
         tenancies, policy, _ = load_tenancies(pref, fb)
@@ -236,141 +228,166 @@ def main():
             tax_audit_df = compute_tax_monthly_audit(monthly, raw_cfg, tenancies, policy)
 
     # ---- Write outputs ----
-    # XLSX
-    with pd.ExcelWriter(out_dir / "mortgage_outputs.xlsx", engine="openpyxl") as xl:
-        monthly.to_excel(xl, sheet_name="Monthly", index=False)
-        reconcile.to_excel(xl, sheet_name="Reconcile", index=False)
-        events.to_excel(xl, sheet_name="EventsDaily", index=False)
+    # Phase 6 / S4: the output artefacts are now gated by the parsed `output`
+    # block. Every default is on with euro formatting, so an unchanged config
+    # writes exactly the same files it wrote before these knobs were honoured
+    # and the Gandon golden master stays green.
+    out_cfg = inputs.output
+    # Currency selects the money symbol used on every sheet; EUR reproduces the
+    # original euro mask character for character, so a default run moves nothing.
+    money_fmt = money_number_format(out_cfg.currency)
 
-        wb = xl.book
-        ws_m = xl.sheets["Monthly"]
-        ws_r = xl.sheets["Reconcile"]
-        ws_e = xl.sheets["EventsDaily"]
+    # XLSX (only when the workbook is switched on) ---------------------------
+    if out_cfg.write_excel:
+        with pd.ExcelWriter(out_dir / "mortgage_outputs.xlsx", engine="openpyxl") as xl:
+            monthly.to_excel(xl, sheet_name="Monthly", index=False)
+            reconcile.to_excel(xl, sheet_name="Reconcile", index=False)
+            # The daily EventsDaily sheet is optional under include_daily_events.
+            if out_cfg.include_daily_events:
+                events.to_excel(xl, sheet_name="EventsDaily", index=False)
 
-        # Tables + formats
-        _add_table(ws_m, "Monthly")
-        _add_table(ws_r, "Reconcile")
-        _add_table(ws_e, "EventsDaily")
+            wb = xl.book
+            ws_m = xl.sheets["Monthly"]
+            ws_r = xl.sheets["Reconcile"]
 
-        _format_sheet(
-            ws_m,
-            money_cols=[
-                "payment_amount", "extra_amount", "lump_amount",
-                "interest_used", "principal_paid",
-                "model_eom_balance", "bank_eom_running_balance", "eom_diff_model_minus_bank",
-                "property_value"
-            ],
-            pct_cols=["annual_rate", "ltv_model_eom", "ltv_bank_eom"],
-            date_cols=["month_start", "payment_date", "posting_date"]
-        )
+            # Tables + formats
+            _add_table(ws_m, "Monthly")
+            _add_table(ws_r, "Reconcile")
 
-        _format_sheet(
-            ws_r,
-            money_cols=["amount", "bank_running_balance", "model_amount", "model_balance", "diff_model_minus_bank"],
-            date_cols=["bank_date"],
-        )
-        
-        _format_sheet(
-            ws_e,
-            money_cols=["amount", "balance", "property_value"],
-            pct_cols=["ltv_after_event"],
-            date_cols=["date"]
-        )
+            _format_sheet(
+                ws_m,
+                money_cols=[
+                    "payment_amount", "extra_amount", "lump_amount",
+                    "interest_used", "principal_paid",
+                    "model_eom_balance", "bank_eom_running_balance", "eom_diff_model_minus_bank",
+                    "property_value"
+                ],
+                pct_cols=["annual_rate", "ltv_model_eom", "ltv_bank_eom"],
+                date_cols=["month_start", "payment_date", "posting_date"],
+                money_format=money_fmt,
+            )
 
-        # ---------------- Tax sheets (optional) ----------------
+            _format_sheet(
+                ws_r,
+                money_cols=["amount", "bank_running_balance", "model_amount", "model_balance", "diff_model_minus_bank"],
+                date_cols=["bank_date"],
+                money_format=money_fmt,
+            )
+
+            # EventsDaily is formatted only when it was written.
+            if out_cfg.include_daily_events:
+                ws_e = xl.sheets["EventsDaily"]
+                _add_table(ws_e, "EventsDaily")
+                _format_sheet(
+                    ws_e,
+                    money_cols=["amount", "balance", "property_value"],
+                    pct_cols=["ltv_after_event"],
+                    date_cols=["date"],
+                    money_format=money_fmt,
+                )
+
+            # ---------------- Tax sheets (optional) ----------------
+            if tax_enabled and tax_year_df is not None:
+                tax_year_df.to_excel(xl, sheet_name="TaxYear", index=False)
+                ws_t = xl.sheets["TaxYear"]
+                _add_table(ws_t, "TaxYear")
+                _format_sheet(
+                    ws_t,
+                    money_cols=["interest_posted", "allowable_interest_s97", "principal_paid"],
+                    pct_cols=["avg_occupancy_ratio", "deductible_pct"],
+                    date_cols=[],
+                    money_format=money_fmt,
+                )
+
+                ten_log_df.to_excel(xl, sheet_name="TenancyLog", index=False)
+                ws_log = xl.sheets["TenancyLog"]
+                _add_table(ws_log, "TenancyLog")
+                _format_sheet(
+                    ws_log,
+                    money_cols=["rent_amount", "security_deposit"],
+                    pct_cols=[],
+                    date_cols=["start", "end", "rtb_registration_date"],
+                    money_format=money_fmt,
+                )
+            if tax_enabled and tax_audit_df is not None:
+                tax_audit_df.to_excel(xl, sheet_name="TaxAudit", index=False)
+                ws_a = xl.sheets["TaxAudit"]
+                _add_table(ws_a, "TaxAudit")
+                _format_sheet(
+                    ws_a,
+                    money_cols=["interest_used", "principal_paid", "allowable_interest_s97"],
+                    pct_cols=["occupancy_ratio", "deductible_pct"],
+                    date_cols=["month_start", "posting_date"],
+                    money_format=money_fmt,
+                )
+
+            # ---------------- Summary (values only) ----------------
+            ws_s = wb.create_sheet("Summary")
+            ws_s.append(["Metric", "Value"])
+
+            portal = (
+                compute_portal_style_metrics(asof_date, inputs, events, monthly)
+                if asof_date
+                else {"principal_excl_unposted": None, "ytd_interest_portal": None}
+            )
+
+            rows = [
+                ("As of date (latest bank actual)", asof_date),
+                ("Bank running balance (as-of)", bank_bal),
+                ("Model balance same date", model_bal_same),
+                ("Difference (model - bank)", diff_bal),
+                ("Current annual rate", cur_rate),
+                ("Next payment date", next_pay_date),
+                ("Next payment amount", next_pay_amt),
+                ("YTD interest (posted only)", ytd_interest),
+                ("YTD principal (posted only)", ytd_principal),
+                ("Portal-style principal (excl. unposted interest)", portal["principal_excl_unposted"]),
+                ("Portal YTD interest (posted + accrual to yesterday)", portal["ytd_interest_portal"]),
+                ("Property value (as-of)", prop_val),
+                ("LTV (as-of)", ltv),
+            ]
+            for k, v in rows:
+                ws_s.append([k, v])
+
+            ws_s.freeze_panes = "A2"
+            ws_s["A1"].font = Font(bold=True)
+            ws_s["B1"].font = Font(bold=True)
+            money_keys = {
+                "Bank running balance (as-of)",
+                "Model balance same date",
+                "Difference (model - bank)",
+                "Next payment amount",
+                "Property value (as-of)",
+                "Portal-style principal (excl. unposted interest)",
+                "Portal YTD interest (posted + accrual to yesterday)",
+            }
+            pct_keys = {"LTV (as-of)", "Current annual rate"}
+            date_keys = {"As of date (latest bank actual)", "Next payment date"}
+            for r in range(2, ws_s.max_row + 1):
+                k = ws_s.cell(row=r, column=1).value
+                v = ws_s.cell(row=r, column=2)
+                if k in money_keys:
+                    # Currency-aware mask (euro by default) keeps a default run identical.
+                    v.number_format = money_fmt
+                if k in pct_keys:
+                    v.number_format = "0.00%"
+                if k in date_keys:
+                    v.number_format = "yyyy-mm-dd"
+            ws_s.column_dimensions["A"].width = 48
+            ws_s.column_dimensions["B"].width = 28
+
+    # CSVs (only when CSV output is switched on) -----------------------------
+    if out_cfg.write_csv:
+        monthly.to_csv(out_dir / "schedule_monthly.csv", index=False)
+        reconcile.to_csv(out_dir / "reconcile.csv", index=False)
+        # The daily events CSV shares the include_daily_events switch with the
+        # workbook sheet so the two artefacts stay consistent.
+        if out_cfg.include_daily_events:
+            events.to_csv(out_dir / "events_daily.csv", index=False)
         if tax_enabled and tax_year_df is not None:
-            tax_year_df.to_excel(xl, sheet_name="TaxYear", index=False)
-            ws_t = xl.sheets["TaxYear"]
-            _add_table(ws_t, "TaxYear")
-            _format_sheet(
-                ws_t,
-                money_cols=["interest_posted", "allowable_interest_s97", "principal_paid"],
-                pct_cols=["avg_occupancy_ratio", "deductible_pct"],
-                date_cols=[],
-            )
-
-            ten_log_df.to_excel(xl, sheet_name="TenancyLog", index=False)
-            ws_log = xl.sheets["TenancyLog"]
-            _add_table(ws_log, "TenancyLog")
-            _format_sheet(
-                ws_log,
-                money_cols=["rent_amount", "security_deposit"],
-                pct_cols=[],
-                date_cols=["start", "end", "rtb_registration_date"],
-            )
+            tax_year_df.to_csv(out_dir / "tax_year.csv", index=False)
         if tax_enabled and tax_audit_df is not None:
-            tax_audit_df.to_excel(xl, sheet_name="TaxAudit", index=False)
-            ws_a = xl.sheets["TaxAudit"]
-            _add_table(ws_a, "TaxAudit")
-            _format_sheet(
-                ws_a,
-                money_cols=["interest_used", "principal_paid", "allowable_interest_s97"],
-                pct_cols=["occupancy_ratio", "deductible_pct"],
-                date_cols=["month_start", "posting_date"]
-            )
-
-        # ---------------- Summary (values only) ----------------
-        ws_s = wb.create_sheet("Summary")
-        ws_s.append(["Metric", "Value"])
-
-        portal = (
-            compute_portal_style_metrics(asof_date, inputs, events, monthly)
-            if asof_date
-            else {"principal_excl_unposted": None, "ytd_interest_portal": None}
-        )
-
-        rows = [
-            ("As of date (latest bank actual)", asof_date),
-            ("Bank running balance (as-of)", bank_bal),
-            ("Model balance same date", model_bal_same),
-            ("Difference (model - bank)", diff_bal),
-            ("Current annual rate", cur_rate),
-            ("Next payment date", next_pay_date),
-            ("Next payment amount", next_pay_amt),
-            ("YTD interest (posted only)", ytd_interest),
-            ("YTD principal (posted only)", ytd_principal),
-            ("Portal-style principal (excl. unposted interest)", portal["principal_excl_unposted"]),
-            ("Portal YTD interest (posted + accrual to yesterday)", portal["ytd_interest_portal"]),
-            ("Property value (as-of)", prop_val),
-            ("LTV (as-of)", ltv),
-        ]
-        for k, v in rows:
-            ws_s.append([k, v])
-
-        ws_s.freeze_panes = "A2"
-        ws_s["A1"].font = Font(bold=True)
-        ws_s["B1"].font = Font(bold=True)
-        money_keys = {
-            "Bank running balance (as-of)",
-            "Model balance same date",
-            "Difference (model - bank)",
-            "Next payment amount",
-            "Property value (as-of)",
-            "Portal-style principal (excl. unposted interest)",
-            "Portal YTD interest (posted + accrual to yesterday)",
-        }
-        pct_keys = {"LTV (as-of)", "Current annual rate"}
-        date_keys = {"As of date (latest bank actual)", "Next payment date"}
-        for r in range(2, ws_s.max_row + 1):
-            k = ws_s.cell(row=r, column=1).value
-            v = ws_s.cell(row=r, column=2)
-            if k in money_keys:
-                v.number_format = "\u20ac#,##0.00"
-            if k in pct_keys:
-                v.number_format = "0.00%"
-            if k in date_keys:
-                v.number_format = "yyyy-mm-dd"
-        ws_s.column_dimensions["A"].width = 48
-        ws_s.column_dimensions["B"].width = 28
-
-    # CSVs
-    monthly.to_csv(out_dir / "schedule_monthly.csv", index=False)
-    reconcile.to_csv(out_dir / "reconcile.csv", index=False)
-    events.to_csv(out_dir / "events_daily.csv", index=False)
-    if tax_enabled and tax_year_df is not None:
-        tax_year_df.to_csv(out_dir / "tax_year.csv", index=False)
-    if tax_enabled and tax_audit_df is not None:
-        tax_audit_df.to_csv(out_dir / "tax_audit.csv", index=False)
+            tax_audit_df.to_csv(out_dir / "tax_audit.csv", index=False)
 
     print("Wrote outputs to:", out_dir.resolve())
     # Plain-English completion line for troubleshooting (stderr only).

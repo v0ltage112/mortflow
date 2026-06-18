@@ -26,8 +26,14 @@ the shared ``report`` helpers. ``run_valuation_only`` orchestrates the three.
 Phase 6 / S3 note: new module. The CLI (``src/engine/__main__.py``) branches to
 ``run_valuation_only`` when ``meta.mortgage_enabled`` is False, so a no-mortgage
 property runs end to end instead of crashing in the loan engine. Mortgage-
-bearing properties never enter this path and are byte-for-byte unchanged; the
-Gandon golden master stays green.
+bearing properties never enter this path and are byte-for-byte unchanged.
+
+Phase 6 / S4 note: the writer now honours the parsed ``output`` block. ``write_csv``
+gates ``valuation_schedule.csv``; ``write_excel`` gates ``valuation_outputs.xlsx``;
+``currency`` selects the money mask via ``report.money_number_format``.
+``include_daily_events`` does not apply because there is no daily event log on
+this path. Every default is on with euro formatting, so a default valuation-only
+run is identical to S3.
 """
 
 from __future__ import annotations
@@ -46,7 +52,9 @@ from .helpers import ensure_date, growth_to_decimal
 from .schema import Inputs, ValuationBlock
 from .valuation import property_value_on
 from .monthly import month_span
-from .report import _add_table, _format_sheet
+# Phase 6 / S4: money_number_format turns the output.currency knob into the Excel
+# money mask; it defaults to the original euro mask for EUR.
+from .report import _add_table, _format_sheet, money_number_format
 
 
 @dataclass
@@ -178,62 +186,76 @@ def write_valuation_outputs(
     and fixtures) and as a readable Excel workbook with a Valuation sheet and a
     one-look Summary sheet (base value, growth, horizon value). Formatting only;
     no figure is changed here.
+
+    Phase 6 / S4: the ``output`` block now gates the two artefacts and selects
+    the money mask. Defaults are on with euro formatting, so a default run is
+    identical to S3. ``include_daily_events`` is not consulted because this path
+    has no daily event log.
     """
+    # Phase 6 / S4: honour the output knobs. write_csv and write_excel gate the
+    # two artefacts; currency selects the money symbol used in the workbook.
+    out_cfg = inputs.output
+    money_fmt = money_number_format(out_cfg.currency)
+
     # CSV first: machine-readable and friendly to a future locked fixture.
-    schedule.to_csv(out_dir / "valuation_schedule.csv", index=False)
+    if out_cfg.write_csv:
+        schedule.to_csv(out_dir / "valuation_schedule.csv", index=False)
 
-    with pd.ExcelWriter(out_dir / "valuation_outputs.xlsx", engine="openpyxl") as xl:
-        schedule.to_excel(xl, sheet_name="Valuation", index=False)
-        wb = xl.book
-        ws_v = xl.sheets["Valuation"]
+    if out_cfg.write_excel:
+        with pd.ExcelWriter(out_dir / "valuation_outputs.xlsx", engine="openpyxl") as xl:
+            schedule.to_excel(xl, sheet_name="Valuation", index=False)
+            wb = xl.book
+            ws_v = xl.sheets["Valuation"]
 
-        # Table + number formats reuse the shared report helpers for one look.
-        _add_table(ws_v, "Valuation")
-        _format_sheet(
-            ws_v,
-            money_cols=["property_value"],
-            date_cols=["month_start"],
-        )
+            # Table + number formats reuse the shared report helpers for one look.
+            _add_table(ws_v, "Valuation")
+            _format_sheet(
+                ws_v,
+                money_cols=["property_value"],
+                date_cols=["month_start"],
+                money_format=money_fmt,
+            )
 
-        # ---------------- Summary (values only) ----------------
-        ws_s = wb.create_sheet("Summary")
-        ws_s.append(["Metric", "Value"])
+            # ---------------- Summary (values only) ----------------
+            ws_s = wb.create_sheet("Summary")
+            ws_s.append(["Metric", "Value"])
 
-        first_value = float(schedule.iloc[0]["property_value"]) if not schedule.empty else None
-        last_value = float(schedule.iloc[-1]["property_value"]) if not schedule.empty else None
+            first_value = float(schedule.iloc[0]["property_value"]) if not schedule.empty else None
+            last_value = float(schedule.iloc[-1]["property_value"]) if not schedule.empty else None
 
-        rows = [
-            ("Property", inputs.meta.name if inputs.meta else ""),
-            ("Property kind", inputs.meta.kind if inputs.meta else ""),
-            ("Base valuation date", anchor.drawdown_date),
-            ("Base value", float(anchor.property_price)),
-            ("Annual growth", growth_to_decimal(anchor.property_growth_pa)),
-            ("Modelling end date", inputs.modelling_end_date),
-            ("Value at base date", first_value),
-            ("Value at horizon", last_value),
-            ("Months modelled", int(len(schedule))),
-            ("LTV", "n/a (no mortgage)"),
-        ]
-        for k, v in rows:
-            ws_s.append([k, v])
+            rows = [
+                ("Property", inputs.meta.name if inputs.meta else ""),
+                ("Property kind", inputs.meta.kind if inputs.meta else ""),
+                ("Base valuation date", anchor.drawdown_date),
+                ("Base value", float(anchor.property_price)),
+                ("Annual growth", growth_to_decimal(anchor.property_growth_pa)),
+                ("Modelling end date", inputs.modelling_end_date),
+                ("Value at base date", first_value),
+                ("Value at horizon", last_value),
+                ("Months modelled", int(len(schedule))),
+                ("LTV", "n/a (no mortgage)"),
+            ]
+            for k, v in rows:
+                ws_s.append([k, v])
 
-        ws_s.freeze_panes = "A2"
-        ws_s["A1"].font = Font(bold=True)
-        ws_s["B1"].font = Font(bold=True)
-        money_keys = {"Base value", "Value at base date", "Value at horizon"}
-        pct_keys = {"Annual growth"}
-        date_keys = {"Base valuation date", "Modelling end date"}
-        for r in range(2, ws_s.max_row + 1):
-            k = ws_s.cell(row=r, column=1).value
-            v = ws_s.cell(row=r, column=2)
-            if k in money_keys:
-                v.number_format = "\u20ac#,##0.00"
-            if k in pct_keys:
-                v.number_format = "0.00%"
-            if k in date_keys:
-                v.number_format = "yyyy-mm-dd"
-        ws_s.column_dimensions["A"].width = 28
-        ws_s.column_dimensions["B"].width = 28
+            ws_s.freeze_panes = "A2"
+            ws_s["A1"].font = Font(bold=True)
+            ws_s["B1"].font = Font(bold=True)
+            money_keys = {"Base value", "Value at base date", "Value at horizon"}
+            pct_keys = {"Annual growth"}
+            date_keys = {"Base valuation date", "Modelling end date"}
+            for r in range(2, ws_s.max_row + 1):
+                k = ws_s.cell(row=r, column=1).value
+                v = ws_s.cell(row=r, column=2)
+                if k in money_keys:
+                    # Currency-aware mask (euro by default) keeps a default run identical.
+                    v.number_format = money_fmt
+                if k in pct_keys:
+                    v.number_format = "0.00%"
+                if k in date_keys:
+                    v.number_format = "yyyy-mm-dd"
+            ws_s.column_dimensions["A"].width = 28
+            ws_s.column_dimensions["B"].width = 28
 
 
 def run_valuation_only(inputs: Inputs, inputs_path: Path, out_dir: Path) -> pd.DataFrame:
