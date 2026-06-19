@@ -1,8 +1,27 @@
 # tools/baseline.py
+"""Baseline builder: freeze the contract-only mortgage schedule per property.
+
+Finance-readable summary
+------------------------
+A "baseline" is the clean, contract-only version of a mortgage: the schedule you
+would get with no voluntary overpayments, no one-off lump sums, and no bank
+habit of folding a standing extra into the monthly payment. It is the reference
+the golden-master test locks, so later refactors can be proven not to move a
+single cent. This tool builds that baseline for each enabled property in a
+portfolio (or for one property on its own) and writes the frozen CSVs plus a
+KPI sheet.
+
+Phase 6 / S5 note: a no-mortgage, owned-outright property has no loan and no
+actuals file, so there is nothing to baseline. Such a property is skipped here;
+its value over time is produced by the engine's valuation-only path and rolled
+up by tools/portfolio.py instead. Without this skip the loop would raise
+KeyError on the missing actuals path and take the whole run down with it.
+"""
 from __future__ import annotations
 from pathlib import Path
 import argparse
 import copy
+import sys
 import yaml
 import pandas as pd
 
@@ -13,9 +32,21 @@ from src.metrics import compute_baseline_kpis
 from src.paths import resolve_out_dir, resolve_relative
 
 
+# Phase 6 / S5: property kinds that carry no mortgage. A baseline freezes the
+# contractual mortgage schedule, so a no-loan property has nothing to baseline.
+# Mirrors the owned-outright spellings the schema accepts.
+_VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
+
+
 # ---------------- utilities ----------------
 
 def _slug(name: str) -> str:
+    """Turn a property name into a filesystem-safe output folder slug.
+
+    Finance note: the slug is the per-property subfolder name (for example
+    'Property A' -> 'property-a'), so each property's frozen baseline lands in
+    its own predictable place.
+    """
     s = name.strip().lower()
     for ch in [' ', '/', '\\', ',', '.', "'", '"', '&', '(', ')', '[', ']', ':', ';', '|', '?', '!']:
         s = s.replace(ch, '-')
@@ -25,11 +56,26 @@ def _slug(name: str) -> str:
 
 
 def _read_yaml(p: Path) -> dict:
+    """Read a YAML file into a plain dict."""
     return yaml.safe_load(p.read_text())
 
 
 def _write_yaml(p: Path, data: dict) -> None:
+    """Write a dict back to YAML, keeping key order for a readable diff."""
     p.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def _is_valuation_only(p: dict) -> bool:
+    """Return True when a portfolio entry has no mortgage to baseline.
+
+    Finance note: a baseline is the contract-only mortgage schedule. An
+    owned-outright property has no loan, so it declares no `actuals` file and
+    there is nothing to freeze. A missing `actuals` line is the primary signal;
+    an explicit owned-outright kind is also accepted.
+    """
+    if not p.get("actuals"):
+        return True
+    return str(p.get("property_kind", "")).strip().lower() in _VALUATION_ONLY_KINDS
 
 
 def _sanitize_for_strict_baseline(cfg: dict) -> dict:
@@ -122,6 +168,17 @@ def main():
         for p in _load_portfolio(args.portfolio):
             name = p.get("name", "property")
             kind = p.get("property_kind", "")
+            # Phase 6 / S5: a no-mortgage property has no actuals and no
+            # contractual schedule to freeze. Skip it here (the engine's
+            # valuation-only path and tools/portfolio.py handle it) rather than
+            # raising KeyError on the missing actuals path.
+            if _is_valuation_only(p):
+                print(
+                    f"[baseline] Skipping {name} ({kind or 'no kind'}): "
+                    "valuation-only, no mortgage baseline.",
+                    file=sys.stderr,
+                )
+                continue
             # Resolve per-property paths relative to the portfolio.yaml location so
             # relative entries do not depend on the current working directory.
             in_path = resolve_relative(args.portfolio, p["inputs"])

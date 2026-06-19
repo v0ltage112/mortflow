@@ -1,0 +1,34 @@
+# data_sample/property_c/inputs.sample.yaml
+# Sample owned-outright property — Paragon Towers, no mortgage.
+# Only the valuation module runs for this kind: the engine tracks the property
+# value over time and writes a minimal valuation output (no schedule, reconcile,
+# or tax). This file is intentionally left OUT of the bundled portfolio.yaml so
+# the golden master (scoped to property-a) is unaffected; wiring it into the
+# portfolio is S5. NEVER put real addresses, balances, or personal data here.
+
+meta:
+  property_id: property-c
+  name: "PROPERTY C"
+  kind: owned_outright          # mortgage off, tax off, valuation on (S2 toggles)
+
+# No 'loan' block: there is no mortgage. The valuation-only path reads the
+# dedicated 'valuation' block below instead of any loan-derived fields.
+valuation:
+  base_date: 2018-05-01         # date the base value is anchored from
+  base_value: 720000            # property value on base_date (EUR)
+  growth_pa: 0.035               # simple annual growth (3.5%); a bare 3.5 is also read as 3.5%
+  # Optional revaluations: pin a new value and/or growth rate from a later date.
+  # blocks:
+  #   - { start: 2026-01-01, value: 815000, growth_pa: 0.02 }
+
+# --- Output knobs (honoured fully in S4; present here for parity) ---
+output:
+  write_excel: true
+  write_csv: true
+  currency: EUR
+  locale: en_IE
+
+# --- Modelling horizon: how far the value series runs ---
+modelling:
+  end_date: 2045-05-01
+  day_count: ACT/365            # informational; valuation uses whole-month growth

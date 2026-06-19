@@ -21,6 +21,13 @@ Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py`` "XLSX
 helpers" and "Portal-style Summary metrics" sections. Behaviour is unchanged;
 only the module header, per-function finance notes, and the stderr status line
 were added.
+
+Phase 6 / S4 note: currency formatting is now data-driven. ``money_number_format``
+maps an ISO currency code to the Excel money mask, and ``_format_sheet`` takes an
+optional ``money_format`` argument. Both default to the original euro mask
+(``€#,##0.00``), so every pre-S4 caller and the locked outputs are unchanged; the
+CLI and the valuation-only path pass the currency-derived mask so the ``output``
+block's ``currency`` knob is honoured in one place.
 """
 
 from __future__ import annotations
@@ -37,6 +44,40 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from .helpers import day_count_divisor, month_index
 from .schema import Inputs
 from .simulate import build_rate_lookup
+
+
+# Phase 6 / S4: map an ISO currency code to the symbol shown in front of money
+# values in the workbook. EUR maps to the exact euro mask the engine used before
+# these knobs were honoured, so the default keeps locked outputs unchanged.
+CURRENCY_SYMBOLS: Dict[str, str] = {
+    "EUR": "€",
+    "GBP": "£",
+    "USD": "$",
+}
+
+# The euro mask the engine used before S4. Kept as the default everywhere so an
+# unchanged config formats money exactly as it did before.
+DEFAULT_MONEY_FORMAT = "€#,##0.00"
+
+
+def money_number_format(currency: Optional[str]) -> str:
+    """Return the Excel number format for a currency code.
+
+    Finance note: picks the symbol the workbook shows in front of money values.
+    A known code (EUR, GBP, USD) uses its symbol; anything else falls back to the
+    ISO code as a prefix so the figure is still labelled. EUR reproduces the exact
+    euro mask used before the currency knob existed, so the default never moves a
+    locked output.
+    """
+    # Normalise so 'eur', ' EUR ', and None all resolve sensibly.
+    code = (currency or "EUR").strip().upper()
+    symbol = CURRENCY_SYMBOLS.get(code)
+    if symbol is not None:
+        # Known symbol sits directly in front of the number, matching the
+        # original euro format string character for character for EUR.
+        return f"{symbol}#,##0.00"
+    # Unknown code: prefix the ISO code and a space so the value stays labelled.
+    return f'"{code} "#,##0.00'
 
 
 # =====================================================================
@@ -61,12 +102,14 @@ def _add_table(ws, name_hint="Tbl"):
     ws.add_table(tbl)
 
 
-def _format_sheet(ws, money_cols=None, pct_cols=None, date_cols=None, freeze=True):
+def _format_sheet(ws, money_cols=None, pct_cols=None, date_cols=None, freeze=True, money_format=DEFAULT_MONEY_FORMAT):
     """Apply consistent formatting to a worksheet in-place.
 
-    Finance note: this only controls how numbers look (euro, percent, dates) and
-    column widths in the workbook. The underlying values are untouched, so it
-    has no effect on the model's results.
+    Finance note: this only controls how numbers look (money, percent, dates) and
+    column widths in the workbook. The underlying values are untouched, so it has
+    no effect on the model's results. ``money_format`` defaults to the euro mask
+    used before S4; the CLI passes a currency-derived mask so the ``output``
+    block's ``currency`` knob is honoured without changing any figure.
     """
     money_cols = set(money_cols or [])
     pct_cols = set(pct_cols or [])
@@ -89,8 +132,10 @@ def _format_sheet(ws, money_cols=None, pct_cols=None, date_cols=None, freeze=Tru
         for r in range(2, ws.max_row + 1):
             ws.cell(row=r, column=c).number_format = numfmt
 
+    # Money columns use the caller's mask (euro by default, so unchanged runs
+    # look identical); percent and date masks are fixed presentation choices.
     for col in money_cols:
-        _fmt(col, "€#,##0.00")
+        _fmt(col, money_format)
     for col in pct_cols:
         _fmt(col, "0.00%")
     for col in date_cols:

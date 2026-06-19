@@ -1,10 +1,15 @@
 # data_sample/portfolio.yaml
-# Sample portfolio — generic placeholder properties.
-# Rename .sample.yaml → .yaml and .sample.csv → .csv in your own data folder,
-# then fill in real values before running with run.bat.
+# Sample portfolio — three anonymised placeholder properties covering the full
+# kind matrix Phase 6 supports: an investment (mortgage + tax), a primary
+# residence (mortgage, tax off), and an owned-outright apartment (no mortgage,
+# valuation only). Rename .sample.yaml to .yaml and .sample.csv to .csv in your
+# own data folder, fill in real values, then run with run.bat. NEVER put real
+# addresses, balances, or personal data here.
 
 portfolio_name: Sample Portfolio
 properties:
+  # Property A — investment (let). Mortgage on, rental tax on, valuation on.
+  # This is the golden-master property; its inputs and outputs must not move.
   - name: Property A
     property_kind: investment
     inputs: property_a/inputs.sample.yaml
@@ -13,10 +18,23 @@ properties:
     out_dir: property-a
     tax_enabled: true
 
+  # Property B — primary residence. Mortgage on, rental tax off, valuation on.
+  # A home you live in earns no rent, so the Form 11 tax module stays off.
   - name: Property B
     property_kind: primary
     inputs: property_b/inputs.sample.yaml
     actuals: property_b/actuals.sample.csv
-    enabled: false
+    enabled: false                    # committed sample stays Property A only so the golden master stays green; enable locally with real data
     out_dir: property-b
+    tax_enabled: false
+
+  # Property C — owned outright. No mortgage and no tax: the engine runs the
+  # valuation-only path and tracks property value over time. There is no
+  # actuals file because there is no bank loan to reconcile against, so the
+  # 'actuals' key is omitted deliberately.
+  - name: Property C
+    property_kind: owned_outright
+    inputs: property_c/inputs.sample.yaml
+    enabled: false                    # committed sample stays Property A only so the golden master stays green; enable locally with real data
+    out_dir: property-c
     tax_enabled: false

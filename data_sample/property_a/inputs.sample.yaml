@@ -51,18 +51,6 @@ bank:
   payment_holidays:                  # Interest-only or full deferral windows (capitalise interest)
     - { start: 2024-03-26, end: 2024-07-31, mode: interest_only, capitalise: true }
 
-# --- Optional, Irish tax settings (for reporting only; the engine already produces the numbers) ---
-tax:
-  jurisdiction: IE
-  # Interest is deductible against rental income when the property is let/available for letting.
-  # If you ever need to exclude months (e.g., not available to let), list windows below.
-  deductible_windows: []            # e.g., [ { start: 2025-01-01, end: 2025-12-31 } ]
-  use_posting_date_for_year: true   # Allocate interest to the year of *posting* (default)
-  deductible_percentage_by_year:    # If legislation changes, override here year→%
-    default: 1.00                   # 1.00 = 100% deductible
-    # 2018: 0.80
-    # 2019+: 1.00
-
 # --- BOI Screenshot for reconciliation ---
 
 reconcile:
@@ -90,9 +78,9 @@ tax:
   enabled: true
   jurisdiction: IE
   tenancy_file: tenancy.local.yaml
-  use_posting_date_for_year: true
+  use_posting_date_for_year: true    # Allocate interest to the year of posting (default)
   deductible_percentage_by_year:
-    default: 1.00
-  deductible_windows: []
+    default: 1.00                     # 1.00 = 100% deductible
+  deductible_windows: []              # e.g. [ { start: 2025-01-01, end: 2025-12-31 } ]
   audit:
-    write_monthly: true        # write a month-level audit sheet/CSV
+    write_monthly: true               # write a month-level audit sheet/CSV
