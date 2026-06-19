@@ -1,46 +1,55 @@
 # data_sample/property_b/inputs.sample.yaml
-# Sample primary residence — enabled: false so the engine skips it.
-# Schema mirrors a real inputs.yaml so you can copy and adapt.
-# NEVER put real addresses, balances, or personal data here.
+# Sample primary residence (Somerton role) — an owner-occupied home with a
+# mortgage. Mortgage on, rental tax OFF (you do not pay income tax on the home
+# you live in), valuation on. Fully fictitious values; the schema mirrors a real
+# inputs.yaml so you can copy and adapt. NEVER put real addresses, balances, or
+# personal data here.
 
 meta:
   property_id: property-b
   name: "Property B"
-  mode: primary
+  kind: primary                 # mortgage on, tax off, valuation on (S2 toggles)
 
 loan:
-  property_price: 280000
-  principal_at_drawdown: 224000
-  drawdown_date: 2020-06-01
-  total_term_months: 300
-  first_payment_date: 2020-09-01
-  known_first_payment: 1005.50
-  repayment_day_default: 1
-  property_growth_pa: 0.025
-  overpayment_cap_pct: 0.10
+  property_price: 340000            # For LTV analytics and sell scenarios
+  principal_at_drawdown: 272000     # Net amount advanced on drawdown day (80% LTV)
+  drawdown_date: 2021-05-20         # Loan start date (value date)
+  total_term_months: 360            # Original contractual term (30 years)
+  first_payment_date: 2021-07-01    # First bank debit (actual)
+  known_first_payment: 1124.86      # Contractual PMT excluding standing extras
+  repayment_day_default: 1          # Used only when no bank payment exists for a month
+  property_growth_pa: 0.025         # Simple growth path for LTV (optional)
+  overpayment_cap_pct: 0.10         # 10% of opening balance per calendar year
 
+# Rate path; month numbers are from drawdown (1 = drawdown month).
+# Tip: prefer adding new blocks rather than editing historical ones.
 rate_blocks:
-  - { start_month: 1,   end_month: 60,  annual_rate: 0.0250, kind: fixed }
-  - { start_month: 61,  end_month: 120, annual_rate: 0.0350, kind: fixed }
-  - { start_month: 121, end_month: 999, annual_rate: 0.0300, kind: variable }
+  - { start_month: 1,   end_month: 36,  annual_rate: 0.0285, kind: fixed }
+  - { start_month: 37,  end_month: 96,  annual_rate: 0.0395, kind: fixed }
+  - { start_month: 97,  end_month: 999, annual_rate: 0.0350, kind: variable }
 
+# When a new block starts and there is no actual payment in that month:
+#   RecalculatePayment -> compute new PMT at new rate over remaining term
+#   TermReduction     -> keep PMT, reduce term
 strategy_at_refix: RecalculatePayment
 
+# No standing extras or one-off lump sums on this sample residence.
 overpay_rules: []
 lump_sums: []
 
+# --- Optional, bank-specific behaviour (not all are used yet) ---
 bank:
-  day_count: ACT/365
-  rounding_decimals: 2
-  merge_standing_extra_into_payment: auto
-  interest_posting_rule: actual_or_eom
-  payment_holidays:
-    - { start: 2020-06-01, end: 2020-08-31, mode: interest_only, capitalise: true }
+  day_count: ACT/365                # Engine uses /365 today
+  rounding_decimals: 2              # Post interest rounded to 2 decimals
+  merge_standing_extra_into_payment: auto   # auto|true|false
+  interest_posting_rule: actual_or_eom      # Use actual date when provided, else EOM
 
+# --- Reconciliation tolerance / portal snapshots ---
 reconcile:
   ok_abs_eur: 0.01
   snapshots: []
 
+# --- Optional, output knobs (honoured in S4) ---
 output:
   write_excel: true
   write_csv: true
@@ -48,10 +57,12 @@ output:
   currency: EUR
   locale: en_IE
 
+# --- Modelling horizon ---
 modelling:
-  end_date: 2045-07-01
-  day_count: ACT/365
+  end_date: 2051-06-01
+  day_count: ACT/365                # informational; the engine uses /365
 
+# --- Irish tax settings: OFF for an owner-occupied residence ---
 tax:
   enabled: false
   jurisdiction: IE
