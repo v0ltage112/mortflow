@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
 import yaml
+from openpyxl.styles import Font  # Phase 6 / S6: build bold fonts directly (Font.copy() is deprecated)
 
 from src.engine import load_inputs  # to pass real inputs to KPIs if supported
 from src.metrics import compute_baseline_kpis
@@ -129,7 +130,11 @@ def write_summary_xlsx(df: pd.DataFrame, path: Path):
 
         # bold header + autofilter + widths
         for cell in ws[1]:
-            cell.font = cell.font.copy(bold=True)  # type: ignore[attr-defined]
+            # Phase 6 / S6: openpyxl 3.x deprecated Font.copy(); build a new bold
+            # Font instead. Header cells start from the default font, so a plain
+            # bold Font reproduces the previous styling exactly and clears the
+            # DeprecationWarning. Values and the golden master are unaffected.
+            cell.font = Font(bold=True)
         ws.auto_filter.ref = ws.dimensions
         for col in range(1, ws.max_column + 1):
             ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = 24
