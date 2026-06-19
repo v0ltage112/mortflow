@@ -11,6 +11,7 @@ The code is decoupled from where its data and outputs live. Clone the repo anywh
 ## ✨ Highlights
 
 - **Daily engine** – realistic payment timing, rate blocks, overpayments, and one-off lump sums are simulated from `inputs.yaml` + `actuals.csv`.
+- **Multi-property toggles** – each property declares a *kind* (investment, primary residence, owned-outright) and mortgage / tax / valuation switch independently; an owned-outright property runs a no-mortgage valuation-only path.
 - **Bank reconciliation** – running balance comparison, portal snapshots, and tolerances are tracked so the model stays aligned with the bank feed.
 - **Tax reporting** – tenancy metadata and occupancy windows drive the Form 11 `TaxYear`, `TaxAudit`, and `TenancyLog` sheets when tax is enabled.
 - **Valuation & LTV analytics** – valuation blocks and HPI-style growth factors feed portfolio KPIs such as `property_value_asof` and `ltv_asof`.
@@ -24,24 +25,28 @@ The code is decoupled from where its data and outputs live. Clone the repo anywh
 ```text
 mortflow/
 ├── data_sample/                # Anonymised sample data (committed — zero-config demo runs)
-│   ├── portfolio.yaml          # Declares the sample properties to batch
-│   ├── property_a/             # Sample investment property (full tax data)
+│   ├── portfolio.yaml          # Declares the sample properties to batch (kind + enable toggles)
+│   ├── property_a/             # Sample investment property: mortgage + tax + valuation
 │   │   ├── actuals.sample.csv
 │   │   ├── inputs.sample.yaml
 │   │   └── tenancy.sample.yaml # Anonymised tenancy schema example
-│   └── property_b/             # Sample owner-occupied profile (disabled)
-│       ├── actuals.sample.csv
+│   ├── property_b/             # Sample residence (primary): mortgage on, tax off (disabled by default)
+│   │   ├── actuals.sample.csv
+│   │   └── inputs.sample.yaml
+│   └── property_c/             # Sample owned-outright property: valuation-only, no mortgage (disabled by default)
 │       └── inputs.sample.yaml
 ├── data/                       # Your real data (gitignored — never committed)
 ├── src/
 │   ├── engine/                 # Core daily ACT/365 engine package
 │   │   ├── __init__.py         # Re-export facade: the public API (run_engine, loaders, dataclasses)
-│   │   ├── __main__.py         # CLI entry point (python -m src.engine)
+│   │   ├── __main__.py         # CLI entry point (python -m src.engine); branches on property kind
 │   │   ├── helpers.py          # Generic date + numeric helpers (incl. growth_to_decimal)
-│   │   ├── schema.py           # Input dataclasses + YAML/CSV loaders
+│   │   ├── schema.py           # Input dataclasses + YAML/CSV loaders; property kind + module toggles
 │   │   ├── valuation.py        # Property value + LTV helpers
+│   │   ├── valuation_only.py   # No-mortgage valuation-only path (value over time, no loan)
 │   │   ├── monthly.py          # Rate lookup, month scaffolding, monthly schedule
 │   │   ├── reconcile.py        # Model-vs-bank reconcile + tolerance labels
+│   │   ├── report.py           # Output writer: CSV + Excel, honours the output.* knobs
 │   │   └── simulate.py         # Daily simulation loop + run_engine orchestrator
 │   ├── metrics.py              # Portfolio KPI helpers
 │   ├── paths.py                # Data/output path resolver (config layer)
@@ -206,7 +211,7 @@ The pytest suite covers reconciliation tolerances, interest accrual, valuation b
 pytest -q
 ```
 
-Expected: **46 passed, 2 skipped, 0 failed**.
+Expected: **53 passed, 2 skipped, 0 failed**.
 
 Run the tests after dependency updates or when you change the engine/tax logic to ensure both the financial maths and tax outputs stay within contract tolerances.
 
@@ -238,6 +243,7 @@ Remove those months from the tenancy file or configure `deductible_window` range
 | v1.4.0 | 2026-06-15 | Initial public release. Daily ACT/365 engine, anonymised sample data, PolyForm Noncommercial licence. |
 | v1.5.0 | 2026-06-16 | Verification & behaviour lock: golden-master snapshot test, pinned dependencies. |
 | v1.6.0 | 2026-06-17 | engine.py refactored into a src/engine/ package behind a re-export facade; run_engine decomposed into simulate / monthly / reconcile / valuation; helper dedupe and dead-import cleanup. No behaviour change. |
+| v1.7.0 | 2026-06-19 | Multi-property scaffolding & toggles: a property kind drives independent mortgage / tax / valuation modules, including a no-mortgage valuation-only path; ignored YAML knobs (output.*) now honoured and payment_holidays parse-and-defer; three-property sample data (Gandon investment, Somerton primary, Paragon owned-outright) with portfolio enable / kind toggles. Gandon golden master unchanged. |
 
 ---
 
