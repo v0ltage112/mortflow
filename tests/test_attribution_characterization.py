@@ -48,9 +48,11 @@ MONEY_ATOL = 0.005
 
 # The Monthly schedule columns as they stand today, before any attribution
 # split is added. This is the snapshot S3 will deliberately break.
+# Phase 7 / S2 re-baseline: contractual_payment was added as an additive
+# baseline column, so it now belongs in this pinned set.
 PRE_ATTRIBUTION_MONTHLY_COLS = {
     "ym", "month_start", "payment_date", "payment_amount", "extra_amount",
-    "lump_amount", "interest_used", "principal_paid", "annual_rate",
+    "lump_amount", "contractual_payment", "interest_used", "principal_paid", "annual_rate",
     "bank_posted_interest_present", "posting_date", "posting_year",
     "model_eom_balance", "bank_eom_running_balance",
     "eom_diff_model_minus_bank", "property_value", "ltv_model_eom",

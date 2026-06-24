@@ -28,6 +28,18 @@ daily loop (plus its setup) was extracted into ``_simulate_daily`` returning a
 interest posting order, the Payment/Extra/Lump debit application, and the
 final-payment trim are byte-for-byte the same lines, only moved. No behaviour
 change; the golden master and the S1 characterization test stay green.
+
+Phase 7 / S2 note: an additive contractual-baseline column is computed here.
+On each payment day the loop records the contractual instalment agreed for that
+month into a new ``month_contractual`` collector: the agreed ladder amount
+(from the Phase 7 / S1 schema) where the bank has confirmed a step, otherwise
+the model's projected scheduled payment (the same ``payment_for_month`` value
+the engine already uses). This is strictly read-only with respect to the loan
+maths: it never touches the balance, the debit applied, the carried-forward
+base payment, or the interest posting, so every existing figure (total paid,
+interest, principal, balance, payoff) stays byte-identical to v1.7.0. The value
+is threaded through ``DailyRunResult`` to ``build_monthly_schedule``, which
+emits it as the new ``contractual_payment`` monthly column.
 """
 
 from __future__ import annotations
@@ -93,6 +105,30 @@ def payment_for_month(
     return last_known_payment_base
 
 
+def _ladder_amount_for_month(inputs: Inputs, mnum: int) -> Optional[float]:
+    """Return the agreed contractual instalment in effect for a model month.
+
+    Finance note: walks the agreed contractual ladder (the drawdown instalment,
+    then each refix the bank has confirmed) and returns the most recent agreed
+    amount that has taken effect by this month. Returns ``None`` when no agreed
+    step applies yet, which is the signal for the caller to fall back to the
+    projected model payment. On its own this reads the agreed terms only and
+    changes no modelled figure.
+
+    Technical note: ``inputs.contractual_ladder`` is sorted ascending by
+    ``start_month`` in the schema loader, so the last step whose ``start_month``
+    is not in the future is the one in effect; the loop stops at the first
+    future step.
+    """
+    agreed: Optional[float] = None
+    for step in inputs.contractual_ladder:
+        if step.start_month <= mnum:
+            agreed = step.amount          # a later confirmed step overrides an earlier one
+        else:
+            break                          # ladder is time-sorted; no later step applies yet
+    return agreed
+
+
 @dataclass
 class DailyRunResult:
     """Raw output of the daily simulation loop, before any reporting tables.
@@ -105,9 +141,14 @@ class DailyRunResult:
     Technical note: the explicit contract between ``_simulate_daily`` (the
     producer) and ``run_engine`` (the consumer), so the orchestrator never
     reaches into loop internals. ``months`` is the prepared month table the
-    monthly assembly needs; the five dicts are the per-``YYYYMM`` collectors the
+    monthly assembly needs; the dicts are the per-``YYYYMM`` collectors the
     loop populates (amounts paid, recurring extras, lump sums, interest used,
-    and the annual rate applied each month).
+    the annual rate applied each month, and the Phase 7 / S2 contractual
+    baseline).
+
+    Phase 7 / S2 adds ``month_contractual``: the agreed (or projected)
+    contractual instalment recorded per ``YYYYMM`` on each payment day, used to
+    build the additive ``contractual_payment`` monthly column.
     """
     months: pd.DataFrame
     events: List[Dict]
@@ -116,6 +157,7 @@ class DailyRunResult:
     month_lumps: Dict[int, float]
     month_interest_used: Dict[int, float]
     month_rate: Dict[int, float]
+    month_contractual: Dict[int, float]
 
 
 def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
@@ -129,11 +171,11 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
     totals that ``run_engine`` then turns into the monthly schedule, LTV
     columns, and reconcile.
 
-    Technical note: extracted verbatim from the old ``run_engine`` body in Phase
-    5 / S5. Behaviour intentionally mimics observed bank behaviour. When a set
-    of debits would push the principal below zero we walk the day's
-    transactions backwards trimming amounts so that the closing balance is
-    exactly zero and no further interest is posted that day.
+    Technical note: the daily mechanics are unchanged from Phase 5 / S5. Phase 7
+    / S2 adds a read-only contractual-baseline capture on payment days (see the
+    CONTRACTUAL BASELINE block); it consults the agreed ladder and, as a
+    fallback, the existing ``payment_for_month`` projection, without mutating
+    any simulation state.
     """
     rate_of = build_rate_lookup(inputs.rate_blocks)
     months = month_tables(inputs, actuals)
@@ -178,6 +220,10 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
     month_extras: Dict[int, float] = {int(r.ym): 0.0 for _, r in months.iterrows()}
     month_lumps: Dict[int, float] = {int(r.ym): 0.0 for _, r in months.iterrows()}
     month_rate: Dict[int, float] = {int(r.ym): rate_of(int(r.month_num)) for _, r in months.iterrows()}
+    # Phase 7 / S2: agreed (or projected) contractual instalment per month.
+    # Seeded at zero for every month and populated on payment days. Additive and
+    # read-only: it never feeds back into the balance or any conserved total.
+    month_contractual: Dict[int, float] = {int(r.ym): 0.0 for _, r in months.iterrows()}
 
     # Event log (only days where something happens).
     events: List[Dict] = []
@@ -237,6 +283,27 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
         # Carry forward ONLY if we computed a new base scheduled payment.
         if base_sched is not None:
             last_known_payment_base = base_sched
+
+        # ---------------- CONTRACTUAL BASELINE (Phase 7 / S2) ----------------
+        # On a payment day, record the contractual instalment agreed for this
+        # month. The agreed ladder wins; where the bank has not confirmed a step
+        # the model's projected scheduled payment is used instead (clearly a
+        # projection, not an agreed figure). This is read-only: it does not
+        # change the balance, the debit applied, the carried-forward base, or the
+        # interest posting, so no existing monthly figure moves.
+        if is_payment_day:
+            agreed_amt = _ladder_amount_for_month(inputs, mnum)
+            if agreed_amt is not None:
+                contractual_today = agreed_amt           # bank-confirmed agreed instalment
+            elif base_sched is not None:
+                contractual_today = base_sched           # scheduled month: reuse the PMT just computed
+            else:
+                # Actual month with no agreed step: project the model PMT using
+                # the same pre-debit balance and rate the scheduled path uses.
+                contractual_today = payment_for_month(
+                    inputs, mnum, annual, balance, months, last_known_payment_base
+                )
+            month_contractual[ym] = round(contractual_today, 2)
 
         # Logic to calculate potential interest posting amount
         interest_to_post = 0.0
@@ -346,6 +413,7 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
         month_lumps=month_lumps,
         month_interest_used=month_interest_used,
         month_rate=month_rate,
+        month_contractual=month_contractual,
     )
 
 
@@ -374,7 +442,8 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     live in ``_simulate_daily``; this function consumes its ``DailyRunResult``
     and calls ``build_monthly_schedule``, ``property_value_on``, and
     ``build_reconcile`` in the same order as before, so the returned tuple and
-    its columns are unchanged.
+    its columns are unchanged apart from the additive Phase 7 / S2
+    ``contractual_payment`` column passed through to the monthly assembly.
     """
     # Plain-English progress line for troubleshooting (stderr only; never stdout).
     print("[engine.simulate] run_engine: starting daily simulation", file=sys.stderr)
@@ -404,7 +473,8 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
 
     # Monthly schedule, posting dates, and EOM balances are assembled in the
     # monthly module.  The per-month collector dicts populated by the daily
-    # loop are passed in explicitly so monthly.py never reaches back here.
+    # loop are passed in explicitly so monthly.py never reaches back here. The
+    # Phase 7 / S2 contractual collector rides along to emit contractual_payment.
     monthly = build_monthly_schedule(
         sim.months,
         events_df,
@@ -414,6 +484,7 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
         sim.month_lumps,
         sim.month_interest_used,
         sim.month_rate,
+        sim.month_contractual,
     )
 
     # Property value (at EOM) and LTVs ----------------------------------------

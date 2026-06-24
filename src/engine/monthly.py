@@ -25,6 +25,13 @@ never import ``simulate``.
 Phase 5 / S3 note: lifted verbatim out of ``simulate.py``. Behaviour is
 unchanged; only the module location and imports differ. The golden master
 still reads 46 passed, 2 skipped, plus the S1 characterization test.
+
+Phase 7 / S2 note: ``build_monthly_schedule`` takes one extra collector,
+``month_contractual`` (the agreed or projected contractual instalment per
+month, computed read-only in the daily loop), and emits it as the new
+``contractual_payment`` column. This is additive: it adds a single column and
+leaves every existing column and value unchanged, so the golden master diffs
+to exactly that one new column.
 """
 
 from __future__ import annotations
@@ -181,6 +188,7 @@ def build_monthly_schedule(
     month_lumps: Dict[int, float],
     month_interest_used: Dict[int, float],
     month_rate: Dict[int, float],
+    month_contractual: Dict[int, float],
 ) -> pd.DataFrame:
     """Assemble the final per-month schedule after the daily loop has run.
 
@@ -189,15 +197,19 @@ def build_monthly_schedule(
     payment, any standing extra, any lump sum, and the interest charged, derives
     the principal repaid, records the interest posting date, and lines up the
     month-end balances for both the model and the bank so the two can be
-    compared. These rows drive the Monthly schedule sheet and the tax outputs.
+    compared. It also reports the contractual baseline for the month: the agreed
+    instalment where the bank has confirmed one, otherwise the model's projected
+    payment. These rows drive the Monthly schedule sheet and the tax outputs.
 
     Technical note: pure relocation of the post-loop assembly from
-    ``run_engine``. The per-month collector dicts (``month_paid``,
-    ``month_extras``, ``month_lumps``, ``month_interest_used``, ``month_rate``)
-    are passed in explicitly so this module never reaches back into
-    ``simulate``. As before, it mutates ``events_df`` in place by adding the
-    ``ym`` helper column used to align events to their calendar month; this
-    matches the pre-S3 behaviour exactly.
+    ``run_engine``, plus the Phase 7 / S2 additive column. The per-month
+    collector dicts (``month_paid``, ``month_extras``, ``month_lumps``,
+    ``month_interest_used``, ``month_rate``, ``month_contractual``) are passed in
+    explicitly so this module never reaches back into ``simulate``. As before,
+    it mutates ``events_df`` in place by adding the ``ym`` helper column used to
+    align events to their calendar month; this matches the pre-S3 behaviour
+    exactly. ``contractual_payment`` is appended only; no existing column or
+    value changes.
     """
     # Plain-English progress line for troubleshooting (stderr only; never stdout).
     print(
@@ -219,6 +231,9 @@ def build_monthly_schedule(
             payment_amount=round(pay, 2),
             extra_amount=round(extra, 2),
             lump_amount=round(lump, 2),
+            # Phase 7 / S2: agreed (or projected) contractual instalment for the
+            # month. Additive baseline column; does not change any other figure.
+            contractual_payment=round(month_contractual[ymkey], 2),
             interest_used=round(interest_used, 2),
             principal_paid=round(principal, 2),
             annual_rate=month_rate[ymkey],
