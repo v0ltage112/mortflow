@@ -74,10 +74,14 @@ def test_merge_extra_enabled_no_separate_extra(inputs):
     extras_today = events[(events["date"] == pay_date) & (events["kind"] == "Extra")]
     assert extras_today.empty, f"Expected NO Extra event on {pay_date}, found:\n{extras_today}"
 
-    # Monthly.extra_amount for that YM should be 0, confirming the merge.
+    # Phase 7 / S4: the merge-split extra_amount column is retired. The merge
+    # behaviour is now observable only in the events log (asserted above). The
+    # monthly schedule's overpayment column reports the AGREED standing extra and
+    # is independent of the merge flag, so it reads 200.00 here regardless of
+    # merging.
     mrow = monthly.loc[monthly["ym"] == ym]
     assert not mrow.empty, "Monthly row missing"
-    assert abs(float(mrow["extra_amount"].iloc[0]) - 0.0) <= 1e-6
+    assert abs(float(mrow["overpayment"].iloc[0]) - 200.0) <= 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -115,10 +119,11 @@ def test_merge_extra_disabled_posts_extra(inputs):
     amt = float(extras_today["amount"].sum())
     assert abs(amt - 200.0) <= 1e-6, f"Extra posted {amt}, expected 200.00"
 
-    # Monthly.extra_amount for that YM should mirror the recurring amount.
+    # Phase 7 / S4: extra_amount is retired. The agreed overpayment column reads
+    # the standing extra (200.00) here, matching the Extra event asserted above.
     mrow = monthly.loc[monthly["ym"] == ym]
     assert not mrow.empty, "Monthly row missing"
-    assert abs(float(mrow["extra_amount"].iloc[0]) - 200.0) <= 1e-6
+    assert abs(float(mrow["overpayment"].iloc[0]) - 200.0) <= 1e-6
 
 
 # ---------------------------------------------------------------------------

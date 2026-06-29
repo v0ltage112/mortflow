@@ -257,7 +257,10 @@ def main():
             _format_sheet(
                 ws_m,
                 money_cols=[
-                    "payment_amount", "extra_amount", "lump_amount",
+                    # Phase 7 / S4: final attribution vocabulary. payment_amount
+                    # and extra_amount are retired; lump_amount is now lump and
+                    # payment_unattributed is now difference.
+                    "contractual", "overpayment", "lump", "total_paid", "difference",
                     "interest_used", "principal_paid",
                     "model_eom_balance", "bank_eom_running_balance", "eom_diff_model_minus_bank",
                     "property_value"

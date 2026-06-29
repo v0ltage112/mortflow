@@ -13,10 +13,11 @@ Returned keys (when the relevant data are supplied):
 
 * ``total_interest`` – Cumulative interest across the model schedule.
 * ``total_principal`` – Principal paid down across the same period.
-* ``total_payments_base`` – Scheduled (non-extra) payments.
-* ``total_extras`` – Additional payments beyond the schedule.
+* ``total_contractual`` – Agreed or projected contractual instalments.
+* ``total_overpayment`` – Agreed standing overpayments (the recognised extra).
+* ``total_difference`` – Unattributed residual (the Difference column).
 * ``total_lumps`` – Lump-sum contributions (if any).
-* ``total_paid_all`` – Sum of base, extra, and lump-sum payments.
+* ``total_paid_all`` – Full debit across the schedule (the total_paid column).
 * ``latest_model_eom_balance`` – Ending balance from the last monthly record.
 * ``payoff_ym`` – Year-month identifier for the payoff month (if detected).
 * ``months_to_clear`` and ``years_to_clear`` – Duration until payoff.
@@ -163,12 +164,16 @@ def _kpis_from_monthly_only(monthly: pd.DataFrame) -> KPIBundle:
     k: KPIBundle = {}
     k["total_interest"] = _sum_or_zero(monthly, "interest_used")
     k["total_principal"] = _sum_or_zero(monthly, "principal_paid")
-    k["total_payments_base"] = _sum_or_zero(monthly, "payment_amount")
-    k["total_extras"] = _sum_or_zero(monthly, "extra_amount")
-    k["total_lumps"] = _sum_or_zero(monthly, "lump_amount")
-    k["total_paid_all"] = (
-        k["total_payments_base"] + k["total_extras"] + k["total_lumps"]
-    )
+    # Phase 7 / S4: the monthly schedule now carries the final attribution
+    # vocabulary; payment_amount and extra_amount are retired. Report the agreed
+    # split instead. total_paid_all stays the conserved full debit by reading the
+    # total_paid column directly (equal to the old base + extra + lump sum to the
+    # cent), and total_lumps reads the renamed lump column.
+    k["total_contractual"] = _sum_or_zero(monthly, "contractual")
+    k["total_overpayment"] = _sum_or_zero(monthly, "overpayment")
+    k["total_difference"] = _sum_or_zero(monthly, "difference")
+    k["total_lumps"] = _sum_or_zero(monthly, "lump")
+    k["total_paid_all"] = _sum_or_zero(monthly, "total_paid")
 
     if "model_eom_balance" in monthly.columns and not monthly.empty:
         k["latest_model_eom_balance"] = float(
@@ -189,13 +194,13 @@ def _next_payment_from_monthly(
 
     When ``as_of`` is ``None`` the computation anchors on ``date.today()``.
     The helper filters rows whose ``payment_date`` is on or after that anchor
-    and whose ``payment_amount`` is positive.  If no such payment exists the
+    and whose ``contractual`` instalment is positive.  If no such payment exists the
     returned values default to ``None``.
     """
 
     if (
         "payment_date" not in monthly.columns
-        or "payment_amount" not in monthly.columns
+        or "contractual" not in monthly.columns
         or monthly.empty
     ):
         return {"next_payment_date": None, "next_payment_amount": None}
@@ -209,7 +214,7 @@ def _next_payment_from_monthly(
     m = m.loc[
         (m["_pdate"].notna())
         & (m["_pdate"] >= as_of)
-        & (m["payment_amount"].fillna(0.0) > 0.0)
+        & (m["contractual"].fillna(0.0) > 0.0)
     ]
     if m.empty:
         return {"next_payment_date": None, "next_payment_amount": None}
@@ -217,7 +222,9 @@ def _next_payment_from_monthly(
     r = m.iloc[0]
     return {
         "next_payment_date": _to_date(r["_pdate"]),
-        "next_payment_amount": float(r["payment_amount"]),
+        # Phase 7 / S4: payment_amount is retired; the contractual instalment is
+        # its direct successor as the "next scheduled payment" figure.
+        "next_payment_amount": float(r["contractual"]),
     }
 
 

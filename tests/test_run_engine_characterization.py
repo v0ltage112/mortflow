@@ -64,13 +64,16 @@ def test_monthly_columns_and_rowcount(engine_result):
     """Lock the Monthly schedule's column set and the full modelling horizon."""
     monthly, _, _ = engine_result
     expected_cols = {
-        "ym", "month_start", "payment_date", "payment_amount", "extra_amount",
-        "lump_amount", "contractual_payment", "interest_used", "principal_paid", "annual_rate",
+        "ym", "month_start", "payment_date",
+        # Phase 7 / S4: final attribution vocabulary (payment_amount and
+        # extra_amount retired; lump_amount -> lump, payment_unattributed ->
+        # difference, contractual_payment -> contractual).
+        "contractual", "overpayment", "lump", "total_paid", "difference",
+        "interest_used", "principal_paid", "annual_rate",
         "bank_posted_interest_present", "posting_date", "posting_year",
         "model_eom_balance", "bank_eom_running_balance",
         "eom_diff_model_minus_bank", "property_value", "ltv_model_eom",
         "ltv_bank_eom",
-        "total_paid", "overpayment", "payment_unattributed",
         "overpayment_mismatch",
 }
     assert set(monthly.columns) == expected_cols
@@ -108,7 +111,7 @@ def test_first_month_representative_cells(engine_result):
     first = _row_by_ym(monthly, 202403)
     # March 2024 carries the actual interest posting of 297.00 and no payment yet.
     assert round(float(first["interest_used"]), 2) == 297.00
-    assert round(float(first["payment_amount"]), 2) == 0.00
+    assert round(float(first["contractual"]), 2) == 0.00
     assert round(float(first["principal_paid"]), 2) == 0.00
     assert float(first["annual_rate"]) == 0.0365
     # On the drawdown month-end no growth has accrued yet, so value == purchase price.

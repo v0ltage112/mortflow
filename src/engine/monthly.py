@@ -43,6 +43,17 @@ paid, interest, principal, balance, payoff) stays byte-identical to v1.7.0; only
 the agreed-terms split is new and the merge flag no longer decides it. A
 dedicated tolerance, ``payment_unattributed_ok_abs_eur`` (default one cent),
 governs the mismatch flag.
+
+Phase 7 / S4 note: the monthly schedule now emits the final attribution
+vocabulary. ``contractual_payment`` is renamed to ``contractual``,
+``lump_amount`` to ``lump``, and ``payment_unattributed`` to ``difference``;
+``overpayment`` and ``total_paid`` keep their S3 names. The legacy
+``payment_amount`` and ``extra_amount`` columns are retired: they were the
+merge-flag-dependent split that the principled contractual / overpayment /
+difference attribution now wholly supersedes. This is a pure rename plus the
+removal of those two duplicated columns; every retained figure (total paid,
+interest, principal, balance, payoff) stays byte-identical to S3, and only the
+column names and the two dropped columns change.
 """
 
 from __future__ import annotations
@@ -250,7 +261,11 @@ def build_monthly_schedule(
         interest_used = month_interest_used[ymkey]
         principal = max(0.0, (pay + extra + lump) - interest_used)
 
-        # Legacy display amounts, each rounded to the cent exactly as in v1.7.0.
+        # Local rounded amounts, each to the cent exactly as in v1.7.0. As of
+        # Phase 7 / S4, payment_amount and extra_amount are no longer emitted as
+        # their own columns (retired in favour of the principled split); they are
+        # kept here only as the inputs that build total_paid. lump_amount is
+        # emitted under the final column name ``lump``.
         payment_amount = round(pay, 2)
         extra_amount = round(extra, 2)
         lump_amount = round(lump, 2)
@@ -294,18 +309,19 @@ def build_monthly_schedule(
             ym=ymkey,
             month_start=r.month_start,
             payment_date=r.pay_date,
-            payment_amount=payment_amount,
-            extra_amount=extra_amount,
-            lump_amount=lump_amount,
-            # Phase 7 / S2: agreed (or projected) contractual instalment for the
-            # month. Additive baseline column; does not change any other figure.
-            contractual_payment=contractual,
-            # Phase 7 / S3: the principled attribution split and its reconciliation
-            # flag. All derived from figures already settled by the daily loop, so
-            # no conserved quantity moves; only the agreed-terms split is new.
-            total_paid=total_paid,
+            # Phase 7 / S4: the final attribution vocabulary. The agreed split
+            # (contractual + overpayment + lump + difference) reconstructs
+            # total_paid to the cent and is the canonical monthly view. The legacy
+            # payment_amount and extra_amount columns are retired here;
+            # contractual_payment is renamed to contractual, lump_amount to lump,
+            # and payment_unattributed to difference. total_paid and overpayment
+            # keep their S3 names. Every conserved figure is untouched: only column
+            # names change and the two duplicates drop.
+            contractual=contractual,
             overpayment=overpayment,
-            payment_unattributed=payment_unattributed,
+            lump=lump_amount,
+            total_paid=total_paid,
+            difference=payment_unattributed,
             overpayment_mismatch=overpayment_mismatch,
             interest_used=round(interest_used, 2),
             principal_paid=round(principal, 2),
