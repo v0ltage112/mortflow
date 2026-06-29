@@ -485,6 +485,9 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
         sim.month_interest_used,
         sim.month_rate,
         sim.month_contractual,
+        # Phase 7 / S3: the dedicated tolerance that decides when an actual
+        # month is flagged as not reconciling to the agreed split.
+        payment_unattributed_ok_abs_eur=inputs.payment_unattributed_ok_abs_eur,
     )
 
     # Property value (at EOM) and LTVs ----------------------------------------

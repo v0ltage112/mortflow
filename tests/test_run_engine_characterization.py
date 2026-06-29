@@ -70,7 +70,9 @@ def test_monthly_columns_and_rowcount(engine_result):
         "model_eom_balance", "bank_eom_running_balance",
         "eom_diff_model_minus_bank", "property_value", "ltv_model_eom",
         "ltv_bank_eom",
-    }
+        "total_paid", "overpayment", "payment_unattributed",
+        "overpayment_mismatch",
+}
     assert set(monthly.columns) == expected_cols
     # Drawdown month 2024-03 through modelling end 2059-04 inclusive = 422 months.
     assert len(monthly) == 422
