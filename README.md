@@ -211,7 +211,7 @@ The pytest suite covers reconciliation tolerances, interest accrual, valuation b
 pytest -q
 ```
 
-Expected: **59 passed, 2 skipped, 0 failed**.
+Expected: **64 passed, 2 skipped, 0 failed**.
 
 Run the tests after dependency updates or when you change the engine/tax logic to ensure both the financial maths and tax outputs stay within contract tolerances.
 
