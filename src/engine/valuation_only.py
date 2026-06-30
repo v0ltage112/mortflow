@@ -39,6 +39,12 @@ from ``helpers.slugify``, the same one the output folder uses) instead of the
 generic ``valuation_outputs.xlsx``, and the Summary sheet is moved to the front
 so it leads the Valuation sheet. These are file-name and tab-order changes only;
 the value-over-time figures are unchanged.
+
+Phase 8 / S3 note: the value-over-time CSV (``valuation_schedule.csv``) is now
+written into the ``output.csv_subdir`` sub-folder (default ``csv``) rather than
+beside the workbook, matching the mortgage path. The workbook stays at the
+property root; an empty ``csv_subdir`` restores the flat layout. The figures are
+unchanged.
 """
 
 from __future__ import annotations
@@ -199,6 +205,9 @@ def write_valuation_outputs(
 
     Phase 8 / S2: the workbook is named ``<slug>_model.xlsx`` (same slug as the
     output folder) and the Summary sheet leads the Valuation sheet.
+
+    Phase 8 / S3: the CSV is demoted into the ``output.csv_subdir`` sub-folder
+    (default ``csv``); the workbook stays at the property root.
     """
     # Phase 6 / S4: honour the output knobs. write_csv and write_excel gate the
     # two artefacts; currency selects the money symbol used in the workbook.
@@ -215,8 +224,14 @@ def write_valuation_outputs(
     workbook_name = f"{slug}_model.xlsx"
 
     # CSV first: machine-readable and friendly to a future locked fixture.
+    # Phase 8 / S3: the valuation CSV is demoted into out_cfg.csv_subdir
+    # (default "csv"), matching the mortgage path, so an owned-outright folder
+    # also shows <slug>_model.xlsx + a tidy csv/ folder. An empty csv_subdir
+    # keeps the old flat layout.
     if out_cfg.write_csv:
-        schedule.to_csv(out_dir / "valuation_schedule.csv", index=False)
+        csv_dir = (out_dir / out_cfg.csv_subdir) if out_cfg.csv_subdir else out_dir
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        schedule.to_csv(csv_dir / "valuation_schedule.csv", index=False)
 
     if out_cfg.write_excel:
         with pd.ExcelWriter(out_dir / workbook_name, engine="openpyxl") as xl:

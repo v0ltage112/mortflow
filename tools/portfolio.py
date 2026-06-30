@@ -23,6 +23,16 @@ name (``<slug>_model.xlsx``) are produced by that one function, so the file and
 its folder can never disagree. The slug logic is identical to the copy that
 lived here, so every folder name and the golden master are unchanged.
 
+Phase 8 / S3 note: the per-property CSVs the engine writes now live under each
+property's ``output.csv_subdir`` sub-folder (default ``csv``), so the runner
+loads each property's inputs once and reads ``schedule_monthly.csv``,
+``events_daily.csv`` and ``valuation_schedule.csv`` from that csv/ folder. The
+rolled-up ``portfolio_summary.csv`` is likewise written under a top-level
+``csv/`` folder (overridable via a top-level ``output.csv_subdir`` in
+portfolio.yaml); the ``portfolio_summary.xlsx`` workbook stays at the output
+root. This is a deliberately light path-only change so S4 can rebuild the rollup
+cleanly; no rolled-up number changes.
+
 Technical summary
 -----------------
 ``run_engine_cli`` now takes an optional actuals path and only appends
@@ -54,6 +64,12 @@ from src.paths import resolve_out_dir, resolve_relative
 # path. Mirrors the canonical owned-outright spellings the schema accepts so the
 # runner agrees with the engine without importing schema internals.
 _VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
+
+# Phase 8 / S3: default CSV sub-folder for the top-level portfolio rollup.
+# Per-property CSVs are read from each property's own output.csv_subdir; the
+# rollup (portfolio_summary.csv) is written under this default unless
+# portfolio.yaml carries a top-level output.csv_subdir override.
+DEFAULT_CSV_SUBDIR = "csv"
 
 def load_portfolio(p: Path) -> Dict:
     """Read portfolio.yaml into a dict and check it carries a properties list.
@@ -176,7 +192,7 @@ def _is_valuation_only(p: Dict) -> bool:
         return True
     return str(p.get("property_kind", "")).strip().lower() in _VALUATION_ONLY_KINDS
 
-def _valuation_summary_row(out_dir: Path, name: str, kind: str, tax_enabled: bool, slug: str) -> Dict:
+def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: bool, slug: str) -> Dict:
     """Build one portfolio-summary row for a valuation-only property.
 
     Finance note: an owned-outright property has no loan KPIs (no payoff date,
@@ -184,8 +200,11 @@ def _valuation_summary_row(out_dir: Path, name: str, kind: str, tax_enabled: boo
     row carries the value at the base date and the value at the modelling
     horizon, read from valuation_schedule.csv. The loan-only columns are absent
     for this row and show blank in the combined portfolio summary.
+
+    Phase 8 / S3: ``csv_dir`` is the property's csv/ sub-folder (where the engine
+    now writes the CSV), so the row is read from the same place the engine wrote.
     """
-    val_csv = out_dir / "valuation_schedule.csv"
+    val_csv = csv_dir / "valuation_schedule.csv"
     if not val_csv.exists():
         raise FileNotFoundError(f"Expected valuation CSV missing: {val_csv}")
     sched = pd.read_csv(val_csv, parse_dates=["month_start"])
@@ -248,6 +267,16 @@ def main():
         slug = p.get("out_dir") or slugify(name)
         out_dir = out_root / slug
 
+        # Phase 8 / S3: the engine now writes every CSV under a per-property
+        # csv/ sub-folder, so the runner must look in the same place the engine
+        # wrote. Load the property's own inputs once to read output.csv_subdir
+        # (default "csv"; an empty value means the old flat layout). load_inputs
+        # tolerates a missing loan block, so this is safe for an owned-outright
+        # property too, and the object is reused for the KPI call below.
+        prop_inputs = load_inputs(inputs_path)
+        csv_subdir = prop_inputs.output.csv_subdir
+        csv_dir = (out_dir / csv_subdir) if csv_subdir else out_dir
+
         # Phase 6 / S5: a no-mortgage property runs the valuation-only path. It
         # has no bank actuals and emits valuation_schedule.csv rather than the
         # loan schedule, so it gets its own run + summary branch.
@@ -255,7 +284,8 @@ def main():
             # No --actuals: the engine skips schedule/reconcile/tax and writes
             # the value-over-time outputs.
             run_engine_cli(inputs_path, None, out_dir)
-            rows.append(_valuation_summary_row(out_dir, name, kind, tax_enabled, slug))
+            # Phase 8 / S3: read the valuation CSV from the property's csv/ dir.
+            rows.append(_valuation_summary_row(csv_dir, name, kind, tax_enabled, slug))
             continue
 
         # Mortgage property: unchanged behaviour. Pass the bank actuals and read
@@ -269,8 +299,9 @@ def main():
         #    - Support both metric APIs:
         #      A) compute_baseline_kpis(inputs, monthly, events)
         #      B) compute_baseline_kpis(monthly)
-        monthly_csv = out_dir / "schedule_monthly.csv"
-        events_csv = out_dir / "events_daily.csv"
+        # Phase 8 / S3: the per-property CSVs now live under csv_dir, not out_dir.
+        monthly_csv = csv_dir / "schedule_monthly.csv"
+        events_csv = csv_dir / "events_daily.csv"
         if not monthly_csv.exists():
             raise FileNotFoundError(f"Expected monthly CSV missing: {monthly_csv}")
 
@@ -279,11 +310,12 @@ def main():
             parse_dates=["month_start", "payment_date", "posting_date"],
         )
 
-        # Build kpis with best available signature
+        # Build kpis with best available signature. prop_inputs was loaded above
+        # (so the inputs file is read once); the try/except still guards the
+        # older one-arg compute_baseline_kpis signature.
         try:
-            inputs = load_inputs(inputs_path)
             events = pd.read_csv(events_csv, parse_dates=["date"]) if events_csv.exists() else pd.DataFrame()
-            kpis = compute_baseline_kpis(inputs, monthly, events)  # newer signature
+            kpis = compute_baseline_kpis(prop_inputs, monthly, events)  # newer signature
         except TypeError:
             kpis = compute_baseline_kpis(monthly)  # legacy one-arg signature
 
@@ -316,7 +348,16 @@ def main():
         cols = [c for c in prefer if c in df.columns] + [c for c in df.columns if c not in prefer]
         df = df[cols]
 
-        df.to_csv(out_root / "portfolio_summary.csv", index=False)
+        # Phase 8 / S3: the rollup CSV is demoted into a top-level csv/ folder to
+        # match the per-property layout. The portfolio knob is read from an
+        # optional top-level output.csv_subdir in portfolio.yaml, defaulting to
+        # "csv"; an empty value keeps the rollup at the output root. The summary
+        # workbook stays at the output root.
+        raw_rollup_subdir = (port.get("output") or {}).get("csv_subdir", DEFAULT_CSV_SUBDIR)
+        rollup_subdir = ("" if raw_rollup_subdir is None else str(raw_rollup_subdir)).strip().strip("/\\")
+        rollup_csv_dir = (out_root / rollup_subdir) if rollup_subdir else out_root
+        rollup_csv_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(rollup_csv_dir / "portfolio_summary.csv", index=False)
         write_summary_xlsx(df, out_root / "portfolio_summary.xlsx")
 
     print(f"Wrote portfolio outputs under: {out_root.resolve()}")

@@ -45,6 +45,14 @@ the same artefacts as before, with euro formatting, and a parsed-only payment-
 holiday window changes no figure, so Gandon's golden master stays green.
 Activating payment holidays is a separate, validated change with a golden
 re-baseline.
+
+Phase 8 / S3 note: ``OutputConfig`` gains a ``csv_subdir`` field (default
+"csv"). It names the sub-folder under each property's output directory that the
+engine writes every CSV into, leaving the headline ``<slug>_model.xlsx`` at the
+property root. Reading it here keeps the one parse point with the rest of the
+output knobs; the writer paths and the portfolio/baseline tools honour it. An
+empty string restores the previous flat layout. No modelled number changes; only
+the CSV paths move.
 """
 
 from __future__ import annotations
@@ -179,9 +187,10 @@ class OutputConfig:
 
     Finance note: these switches decide what the run leaves on disk and how
     currency is shown. They do not change a single modelled figure; they only
-    gate which files appear and which currency symbol the workbook uses. The
-    defaults match what the engine wrote before these knobs were honoured, so an
-    unchanged config produces an unchanged set of files.
+    gate which files appear, which currency symbol the workbook uses, and which
+    sub-folder the CSVs land in. The defaults match what the engine wrote before
+    these knobs were honoured, so an unchanged config produces an unchanged set
+    of files (bar the Phase 8 csv/ sub-folder, which is the new default layout).
     """
 
     write_excel: bool = True            # write the .xlsx workbook
@@ -189,6 +198,11 @@ class OutputConfig:
     include_daily_events: bool = True   # include the daily events sheet + events_daily.csv
     currency: str = "EUR"               # ISO code; selects the workbook money symbol
     locale: str = "en_IE"               # locale tag; recorded (see note below)
+    # Phase 8 / S3: sub-folder under each property's output directory that every
+    # CSV is written into; the headline .xlsx stays at the property root. Default
+    # "csv" gives <slug>_model.xlsx + csv/. An empty string (or null) restores the
+    # flat layout with the CSVs beside the workbook.
+    csv_subdir: str = "csv"
 
 
 @dataclass
@@ -317,9 +331,10 @@ def _resolve_output(raw: dict) -> OutputConfig:
 
     Finance note: reads the output switches an analyst can set (write the
     workbook, write the CSVs, include the daily-events detail, pick a currency
-    and locale). Every default reproduces the pre-S4 behaviour, so a file with no
-    ``output`` block, or one that omits a key, writes exactly what the engine
-    wrote before these knobs were honoured.
+    and locale, and choose the CSV sub-folder name). Every default reproduces the
+    pre-S4 behaviour for the switches, so a file with no ``output`` block, or one
+    that omits a key, writes exactly what the engine wrote before these knobs
+    were honoured (the CSVs now sit under the default ``csv/`` sub-folder).
     """
     out_raw = (raw.get("output") or {})
 
@@ -338,12 +353,20 @@ def _resolve_output(raw: dict) -> OutputConfig:
     currency = str(out_raw.get("currency") or "EUR").strip().upper()
     locale = str(out_raw.get("locale") or "en_IE").strip()
 
+    # Phase 8 / S3: the CSV sub-folder name. A missing key defaults to "csv"; an
+    # explicit empty string (or null) restores the flat layout with the CSVs
+    # beside the workbook. Trimming any surrounding slashes keeps it a single
+    # safe folder name regardless of how it is typed.
+    raw_csv_subdir = out_raw.get("csv_subdir", "csv")
+    csv_subdir = ("" if raw_csv_subdir is None else str(raw_csv_subdir)).strip().strip("/\\")
+
     return OutputConfig(
         write_excel=_flag("write_excel", True),
         write_csv=_flag("write_csv", True),
         include_daily_events=_flag("include_daily_events", True),
         currency=currency,
         locale=locale,
+        csv_subdir=csv_subdir,
     )
 
 

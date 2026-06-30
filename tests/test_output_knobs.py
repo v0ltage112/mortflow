@@ -13,6 +13,10 @@ These tests pin two promises made in S4:
 
 The CLI-level test runs the real ``python -m src.engine`` so it exercises the
 writer path end to end, mirroring how the golden-master test invokes the engine.
+
+Phase 8 / S3 note: the CSVs now land under a ``csv/`` subfolder (the
+``output.csv_subdir`` knob, default ``csv``), so the CLI gating test looks for
+them there; only the workbook stays at the output root.
 """
 
 from __future__ import annotations
@@ -174,9 +178,14 @@ def test_cli_gates_excel_and_events(inputs_path, actuals_path, tmp_path):
         check=True,
     )
 
-    # Workbook suppressed, daily-events CSV suppressed.
-    assert not (out_dir / "mortgage_outputs.xlsx").exists()
-    assert not (out_dir / "events_daily.csv").exists()
-    # The other CSVs are still written.
-    assert (out_dir / "schedule_monthly.csv").exists()
-    assert (out_dir / "reconcile.csv").exists()
+    # Phase 8 / S3: CSVs now land under the csv/ subfolder (output.csv_subdir,
+    # default "csv"); only the workbook would sit at the property root.
+    csv_dir = out_dir / "csv"
+    # Workbook suppressed: write_excel is off, so no .xlsx is written at the
+    # property root at all (glob is robust to the S2 <slug>_model.xlsx rename).
+    assert not list(out_dir.glob("*.xlsx"))
+    # Daily-events CSV suppressed: absent from the csv/ folder.
+    assert not (csv_dir / "events_daily.csv").exists()
+    # The other CSVs are still written, now inside csv/.
+    assert (csv_dir / "schedule_monthly.csv").exists()
+    assert (csv_dir / "reconcile.csv").exists()

@@ -48,6 +48,15 @@ lump, difference) are surfaced on the Summary. These are file-shape and
 presentation changes only: the engine maths and every reported number are
 unchanged, so the golden master (which checks CSV values) stays green. The CSV
 file names are unchanged here; demoting them into a ``csv/`` subfolder is S3.
+
+Phase 8 / S3 note: that demotion is now done. Every CSV the mortgage path writes
+(``schedule_monthly``, ``reconcile``, ``events_daily``, and the optional
+``tax_year`` / ``tax_audit``) is written into the ``out_cfg.csv_subdir``
+sub-folder (default ``csv``) instead of beside the workbook; the
+``<slug>_model.xlsx`` workbook stays at the property root. An empty
+``csv_subdir`` restores the flat layout. CSV contents and the engine maths are
+unchanged, so the golden master (which compares CSV values) stays green; only
+the paths moved.
 """
 
 from __future__ import annotations
@@ -454,17 +463,23 @@ def main():
             ]
 
     # CSVs (only when CSV output is switched on) -----------------------------
+    # Phase 8 / S3: every CSV is demoted into the out_cfg.csv_subdir sub-folder
+    # (default "csv") so the property folder shows the headline workbook plus a
+    # tidy csv/ folder. An empty csv_subdir restores the old flat layout. The
+    # workbook written above is unaffected; it stays at the property root.
     if out_cfg.write_csv:
-        monthly.to_csv(out_dir / "schedule_monthly.csv", index=False)
-        reconcile.to_csv(out_dir / "reconcile.csv", index=False)
+        csv_dir = (out_dir / out_cfg.csv_subdir) if out_cfg.csv_subdir else out_dir
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        monthly.to_csv(csv_dir / "schedule_monthly.csv", index=False)
+        reconcile.to_csv(csv_dir / "reconcile.csv", index=False)
         # The daily events CSV shares the include_daily_events switch with the
         # workbook sheet so the two artefacts stay consistent.
         if out_cfg.include_daily_events:
-            events.to_csv(out_dir / "events_daily.csv", index=False)
+            events.to_csv(csv_dir / "events_daily.csv", index=False)
         if tax_enabled and tax_year_df is not None:
-            tax_year_df.to_csv(out_dir / "tax_year.csv", index=False)
+            tax_year_df.to_csv(csv_dir / "tax_year.csv", index=False)
         if tax_enabled and tax_audit_df is not None:
-            tax_audit_df.to_csv(out_dir / "tax_audit.csv", index=False)
+            tax_audit_df.to_csv(csv_dir / "tax_audit.csv", index=False)
 
     print("Wrote outputs to:", out_dir.resolve())
     # Plain-English completion line for troubleshooting (stderr only).

@@ -11,6 +11,16 @@ and this test fails loudly the moment any number moves beyond half a cent.
 Fixtures live in ``tests/fixtures/golden/`` and were captured from a run Ali
 verified against the bank on real Property A data, then locked from the
 de-identified sample that reproduces the same figures.
+
+Phase 8 / S3 note: the engine now writes every CSV into a ``csv/`` sub-folder
+(per-property ``<slug>/csv/`` and a top-level ``csv/`` for the rollup), so the
+produced files this test reads live one level deeper than before. The committed
+fixtures are intentionally left at their existing locations: a fixture is just
+the locked expected value, and its on-disk path is independent of the runtime
+output layout. Because the CSV contents are byte-identical (S3 moved paths only,
+not numbers), the suite stays green without re-capturing anything. Any fixture
+re-baseline is deferred to S5. The effective-inputs YAML stays at the property
+root and its test is unchanged.
 """
 from __future__ import annotations
 
@@ -52,6 +62,13 @@ SAMPLE_PORTFOLIO = REPO_ROOT / "data_sample" / "portfolio.yaml"
 # Per-property CSVs to lock, relative to the property output sub-folder.
 # Only Property A is enabled in the sample portfolio, so it is the only scope.
 PROPERTY_SCOPE = "property-a"
+# Phase 8 / S3: the engine now writes every CSV into this sub-folder, both under
+# each property folder and at the output root for the rollup. The produced files
+# therefore sit at <scope>/csv/<name>; the committed fixtures stay at their
+# existing <scope>/<name> locations (their layout is independent of the runtime
+# output layout, and the values are byte-identical, so the suite stays green
+# without re-capturing them). S5 owns any fixture re-baseline.
+CSV_SUBDIR = "csv"
 PROPERTY_CSV_FILES = [
     "baseline_monthly.csv",
     "baseline_reconcile.csv",
@@ -257,9 +274,17 @@ def _assert_csv_matches(actual_path: Path, expected_path: Path) -> None:
 
 @pytest.mark.parametrize("rel_name", PROPERTY_CSV_FILES)
 def test_property_csv_locked(generated_out: Path, rel_name: str) -> None:
-    """Each per-property CSV matches its committed fixture to 2dp."""
+    """Each per-property CSV matches its committed fixture to 2dp.
+
+    Phase 8 / S3: the produced CSV now lives under the property's csv/ sub-folder
+    (CSV_SUBDIR), while the committed fixture stays at its existing
+    <scope>/<name> location. The values are byte-identical, so this asymmetry is
+    intentional and the assertion still passes.
+    """
     _assert_csv_matches(
-        generated_out / PROPERTY_SCOPE / rel_name,
+        # Produced side: now one level deeper, under the property's csv/ folder.
+        generated_out / PROPERTY_SCOPE / CSV_SUBDIR / rel_name,
+        # Expected side: committed fixture, unchanged location and values.
         GOLDEN_DIR / PROPERTY_SCOPE / rel_name,
     )
 
@@ -271,9 +296,14 @@ def test_root_csv_locked(generated_out: Path, rel_name: str) -> None:
     out_dir is locked as the relative slug "property-a" (see the relative
     out_dir change in tools/portfolio.py), so this assertion is machine
     independent.
+
+    Phase 8 / S3: the produced rollup now lives under the top-level csv/
+    sub-folder; the committed fixture stays at the golden root.
     """
     _assert_csv_matches(
-        generated_out / rel_name,
+        # Produced side: now under the top-level csv/ folder.
+        generated_out / CSV_SUBDIR / rel_name,
+        # Expected side: committed fixture at the golden root, unchanged.
         GOLDEN_DIR / rel_name,
     )
 
@@ -284,6 +314,9 @@ def test_effective_inputs_yaml_byte_equal(generated_out: Path) -> None:
     This file is a YAML re-dump of the resolved inputs, not computed numbers,
     so it must reproduce exactly. Newlines are normalised so a CRLF/LF flip
     between machines does not cause a false failure.
+
+    Phase 8 / S3: the YAML snapshot stays at the property root (it is not a CSV),
+    so both the produced path and the fixture path are unchanged here.
     """
     actual_path = generated_out / PROPERTY_SCOPE / YAML_FILE
     expected_path = GOLDEN_DIR / PROPERTY_SCOPE / YAML_FILE

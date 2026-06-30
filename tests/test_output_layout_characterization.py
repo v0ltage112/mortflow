@@ -30,6 +30,15 @@ file set, the openpyxl sheet-name order per workbook, and the pandas-read column
 order per CSV against constants captured from the locked v1.8.0 golden fixtures
 and the two writer paths. This is a shape test only; it asserts no numbers, so
 it never overlaps with the golden-master numeric contract.
+
+Phase 8 / S3 note
+-----------------
+The CSV outputs now live one level below each output root, in a ``csv/``
+subfolder (the ``output.csv_subdir`` knob, default ``csv``); only the workbooks
+stay at the root. This test therefore looks for each workbook at the property
+root and every CSV inside ``csv/``, and the rollup CSV inside a top-level
+``csv/``. The committed golden fixtures are intentionally left where they are;
+the S5 re-baseline owns moving them.
 """
 from __future__ import annotations
 
@@ -72,6 +81,12 @@ DATA_SAMPLE = REPO_ROOT / "data_sample"
 # The sample portfolio file the rollup runner reads (Property A is the only
 # enabled entry, so the rollup pins a single mortgage row).
 SAMPLE_PORTFOLIO = DATA_SAMPLE / "portfolio.yaml"
+
+# Phase 8 / S3: every CSV is now written one level below the property (and the
+# portfolio) output root, into this subfolder. It mirrors the default of the
+# output.csv_subdir knob ("csv"); only the workbooks stay at the root. The
+# committed golden fixtures are unchanged and the S5 re-baseline owns moving them.
+CSV_SUBDIR = "csv"
 
 
 # ---------------------------------------------------------------------------
@@ -158,14 +173,14 @@ class PropertyShape:
     sheets: Tuple[str, ...]        # expected worksheet tabs, in order
     csv_columns: Dict[str, List[str]] = field(default_factory=dict)  # csv -> cols
 
-    def expected_files(self) -> List[str]:
-        """Return every file this property is expected to write, sorted.
+    def expected_csvs(self) -> List[str]:
+        """Return the CSV file names this property is expected to write, sorted.
 
-        The engine writes exactly the workbook plus its CSVs into the property's
-        own output folder, so the produced file set should match this list with
-        nothing extra and nothing missing.
+        Phase 8 / S3: every CSV now lives in the property's ``csv/`` subfolder,
+        so this is the exact set the subfolder must hold, with nothing extra and
+        nothing missing. The workbook is checked separately at the property root.
         """
-        return sorted([self.workbook, *self.csv_columns.keys()])
+        return sorted(self.csv_columns.keys())
 
 
 # The three sample properties, one of each kind, covering the full matrix of
@@ -340,21 +355,41 @@ def _read_sheet_names(workbook_path: Path) -> Tuple[str, ...]:
 
 @pytest.mark.parametrize("shape", PROPERTY_SHAPES, ids=[s.slug for s in PROPERTY_SHAPES])
 def test_property_file_set(property_outputs: Dict[str, Path], shape: PropertyShape) -> None:
-    """Each property writes exactly its expected workbook and CSVs, no more.
+    """Each property writes exactly its workbook at the root and its CSVs in csv/.
 
-    A surprise extra file or a missing one is a layout change, so the produced
-    set must equal the locked set exactly.
+    A surprise extra file or a missing one is a layout change, so both the
+    property-root set (the workbook only) and the csv/ set (exactly the CSVs)
+    must equal their locked sets exactly.
+
+    Phase 8 / S3: the CSVs moved down into csv/, so the root now holds only the
+    workbook and the csv/ subfolder holds the property's CSVs.
     """
     out_dir = property_outputs[shape.slug]
-    # Only files (not any stray sub-folders) are part of the per-property output.
-    produced = sorted(p.name for p in out_dir.iterdir() if p.is_file())
-    expected = shape.expected_files()
-    assert produced == expected, (
-        f"{shape.slug} ({shape.kind_label}): the produced file set changed.\n"
-        f"  Expected: {expected}\n"
-        f"  Produced: {produced}\n"
-        f"  Missing now:    {[f for f in expected if f not in produced] or 'none'}\n"
-        f"  New/unexpected: {[f for f in produced if f not in expected] or 'none'}"
+    # The property root must now hold exactly the workbook; every CSV moved into
+    # csv/, so a CSV still sitting at the root is a regression we want to catch.
+    produced_root = sorted(p.name for p in out_dir.iterdir() if p.is_file())
+    expected_root = [shape.workbook]
+    assert produced_root == expected_root, (
+        f"{shape.slug} ({shape.kind_label}): the property-root file set changed.\n"
+        f"  Expected: {expected_root}\n"
+        f"  Produced: {produced_root}\n"
+        f"  Missing now:    {[f for f in expected_root if f not in produced_root] or 'none'}\n"
+        f"  New/unexpected: {[f for f in produced_root if f not in expected_root] or 'none'}"
+    )
+    # The csv/ subfolder must hold exactly this property's CSVs, nothing else.
+    csv_dir = out_dir / CSV_SUBDIR
+    expected_csvs = shape.expected_csvs()
+    produced_csvs = (
+        sorted(p.name for p in csv_dir.iterdir() if p.is_file())
+        if csv_dir.is_dir()
+        else []
+    )
+    assert produced_csvs == expected_csvs, (
+        f"{shape.slug} ({shape.kind_label}): the csv/ file set changed.\n"
+        f"  Expected: {expected_csvs}\n"
+        f"  Produced: {produced_csvs}\n"
+        f"  Missing now:    {[f for f in expected_csvs if f not in produced_csvs] or 'none'}\n"
+        f"  New/unexpected: {[f for f in produced_csvs if f not in expected_csvs] or 'none'}"
     )
 
 
@@ -395,7 +430,8 @@ def test_property_csv_columns(
     expected_columns: List[str],
 ) -> None:
     """Each per-property CSV has exactly the locked columns, in order."""
-    csv_path = property_outputs[slug] / csv_name
+    # Phase 8 / S3: per-property CSVs now live in the property's csv/ subfolder.
+    csv_path = property_outputs[slug] / CSV_SUBDIR / csv_name
     assert csv_path.exists(), (
         f"{slug}: expected CSV {csv_name} was not produced at {csv_path}."
     )
@@ -412,7 +448,9 @@ def test_property_csv_columns(
 
 def test_portfolio_summary_csv_columns(portfolio_output: Path) -> None:
     """The portfolio rollup CSV has exactly the locked columns, in order."""
-    csv_path = portfolio_output / "portfolio_summary.csv"
+    # Phase 8 / S3: the rollup CSV now lives under a top-level csv/ subfolder;
+    # portfolio_summary.xlsx still sits at the out root.
+    csv_path = portfolio_output / CSV_SUBDIR / "portfolio_summary.csv"
     assert csv_path.exists(), (
         f"portfolio_summary.csv was not produced at {csv_path}."
     )
