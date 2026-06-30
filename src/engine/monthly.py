@@ -25,6 +25,35 @@ never import ``simulate``.
 Phase 5 / S3 note: lifted verbatim out of ``simulate.py``. Behaviour is
 unchanged; only the module location and imports differ. The golden master
 still reads 46 passed, 2 skipped, plus the S1 characterization test.
+
+Phase 7 / S2 note: ``build_monthly_schedule`` takes one extra collector,
+``month_contractual`` (the agreed or projected contractual instalment per
+month, computed read-only in the daily loop), and emits it as the new
+``contractual_payment`` column. This is additive: it adds a single column and
+leaves every existing column and value unchanged, so the golden master diffs
+to exactly that one new column.
+
+Phase 7 / S3 note: ``build_monthly_schedule`` now emits the principled
+attribution split on top of the S2 baseline: ``total_paid`` (the full monthly
+debit), ``overpayment`` (the agreed standing extra from ``overpay_rules``),
+``payment_unattributed`` (the explicit Difference residual), and the
+``overpayment_mismatch`` reconciliation flag. The split is derived entirely
+from figures the daily loop already settled, so every conserved quantity (total
+paid, interest, principal, balance, payoff) stays byte-identical to v1.7.0; only
+the agreed-terms split is new and the merge flag no longer decides it. A
+dedicated tolerance, ``payment_unattributed_ok_abs_eur`` (default one cent),
+governs the mismatch flag.
+
+Phase 7 / S4 note: the monthly schedule now emits the final attribution
+vocabulary. ``contractual_payment`` is renamed to ``contractual``,
+``lump_amount`` to ``lump``, and ``payment_unattributed`` to ``difference``;
+``overpayment`` and ``total_paid`` keep their S3 names. The legacy
+``payment_amount`` and ``extra_amount`` columns are retired: they were the
+merge-flag-dependent split that the principled contractual / overpayment /
+difference attribution now wholly supersedes. This is a pure rename plus the
+removal of those two duplicated columns; every retained figure (total paid,
+interest, principal, balance, payoff) stays byte-identical to S3, and only the
+column names and the two dropped columns change.
 """
 
 from __future__ import annotations
@@ -181,6 +210,8 @@ def build_monthly_schedule(
     month_lumps: Dict[int, float],
     month_interest_used: Dict[int, float],
     month_rate: Dict[int, float],
+    month_contractual: Dict[int, float],
+    payment_unattributed_ok_abs_eur: float = 0.01,
 ) -> pd.DataFrame:
     """Assemble the final per-month schedule after the daily loop has run.
 
@@ -189,15 +220,32 @@ def build_monthly_schedule(
     payment, any standing extra, any lump sum, and the interest charged, derives
     the principal repaid, records the interest posting date, and lines up the
     month-end balances for both the model and the bank so the two can be
-    compared. These rows drive the Monthly schedule sheet and the tax outputs.
+    compared. It also reports the contractual baseline for the month: the agreed
+    instalment where the bank has confirmed one, otherwise the model's projected
+    payment. These rows drive the Monthly schedule sheet and the tax outputs.
 
     Technical note: pure relocation of the post-loop assembly from
-    ``run_engine``. The per-month collector dicts (``month_paid``,
-    ``month_extras``, ``month_lumps``, ``month_interest_used``, ``month_rate``)
-    are passed in explicitly so this module never reaches back into
-    ``simulate``. As before, it mutates ``events_df`` in place by adding the
-    ``ym`` helper column used to align events to their calendar month; this
-    matches the pre-S3 behaviour exactly.
+    ``run_engine``, plus the Phase 7 / S2 additive column. The per-month
+    collector dicts (``month_paid``, ``month_extras``, ``month_lumps``,
+    ``month_interest_used``, ``month_rate``, ``month_contractual``) are passed in
+    explicitly so this module never reaches back into ``simulate``. As before,
+    it mutates ``events_df`` in place by adding the ``ym`` helper column used to
+    align events to their calendar month; this matches the pre-S3 behaviour
+    exactly. ``contractual_payment`` is appended only; no existing column or
+    value changes.
+
+    Phase 7 / S3 note: this assembly now also emits the principled attribution
+    split. ``total_paid`` is the full monthly debit (the sum of the legacy
+    payment, extra, and lump amounts, so it is invariant to the merge flag and
+    byte-identical to v1.7.0). ``overpayment`` is the agreed standing extra for
+    the month taken from ``overpay_rules`` (``months.recurring_extra``),
+    recognised only where a modelled instalment exists. ``payment_unattributed``
+    is the explicit Difference residual, ``total_paid - (contractual_payment +
+    overpayment + lump_amount)``, so the four agreed parts always reconstruct the
+    debit to the cent and drift never silently inflates overpayment.
+    ``overpayment_mismatch`` flags an actual-payment month whose Difference
+    exceeds ``payment_unattributed_ok_abs_eur``. All four are derived from
+    figures the daily loop already settled, so no conserved quantity moves.
     """
     # Plain-English progress line for troubleshooting (stderr only; never stdout).
     print(
@@ -212,13 +260,69 @@ def build_monthly_schedule(
         pay = month_paid[ymkey]; extra = month_extras[ymkey]; lump = month_lumps[ymkey]
         interest_used = month_interest_used[ymkey]
         principal = max(0.0, (pay + extra + lump) - interest_used)
+
+        # Local rounded amounts, each to the cent exactly as in v1.7.0. As of
+        # Phase 7 / S4, payment_amount and extra_amount are no longer emitted as
+        # their own columns (retired in favour of the principled split); they are
+        # kept here only as the inputs that build total_paid. lump_amount is
+        # emitted under the final column name ``lump``.
+        payment_amount = round(pay, 2)
+        extra_amount = round(extra, 2)
+        lump_amount = round(lump, 2)
+
+        # ---------------- ATTRIBUTION SPLIT (Phase 7 / S3) ----------------
+        # total_paid is the full debit for the month: the same money that already
+        # flowed through the daily loop, expressed as the sum of the three legacy
+        # amounts. It is therefore invariant to the merge flag and byte-identical
+        # to v1.7.0's payment + extra + lump.
+        total_paid = round(payment_amount + extra_amount + lump_amount, 2)
+
+        # contractual is the agreed (or projected) instalment captured on the
+        # payment day in the daily loop (Phase 7 / S2). It is zero in months with
+        # no modelled instalment (before the first payment, or after payoff).
+        contractual = round(month_contractual[ymkey], 2)
+
+        # overpayment is the AGREED standing extra for the month from
+        # overpay_rules (months.recurring_extra already sums the rules and honours
+        # each rule's end_month). It is recognised only in months that carry a
+        # modelled instalment: with no instalment there is nothing to overpay, so
+        # it stays zero and never invents a phantom overpayment in a closed month.
+        agreed_overpayment = round(float(r.recurring_extra or 0.0), 2)
+        overpayment = agreed_overpayment if contractual > 0.0 else 0.0
+
+        # payment_unattributed (the Difference) is the explicit residual: whatever
+        # of the actual debit the agreed split does not account for. Engine
+        # rounding, recompute drift, or a genuine over/under-payment lands here
+        # and never silently inflates overpayment. By construction the four parts
+        # add back to total_paid to the cent:
+        #   contractual + overpayment + lump + payment_unattributed == total_paid
+        payment_unattributed = round(total_paid - contractual - overpayment - lump_amount, 2)
+
+        # overpayment_mismatch flags an actual-payment month whose observed debit
+        # does not reconcile to the agreed split within the dedicated tolerance.
+        # Projected months never flag: they carry no bank debit to disagree with.
+        overpayment_mismatch = bool(
+            r.has_actual_payment and abs(payment_unattributed) > payment_unattributed_ok_abs_eur
+        )
+
         rows.append(dict(
             ym=ymkey,
             month_start=r.month_start,
             payment_date=r.pay_date,
-            payment_amount=round(pay, 2),
-            extra_amount=round(extra, 2),
-            lump_amount=round(lump, 2),
+            # Phase 7 / S4: the final attribution vocabulary. The agreed split
+            # (contractual + overpayment + lump + difference) reconstructs
+            # total_paid to the cent and is the canonical monthly view. The legacy
+            # payment_amount and extra_amount columns are retired here;
+            # contractual_payment is renamed to contractual, lump_amount to lump,
+            # and payment_unattributed to difference. total_paid and overpayment
+            # keep their S3 names. Every conserved figure is untouched: only column
+            # names change and the two duplicates drop.
+            contractual=contractual,
+            overpayment=overpayment,
+            lump=lump_amount,
+            total_paid=total_paid,
+            difference=payment_unattributed,
+            overpayment_mismatch=overpayment_mismatch,
             interest_used=round(interest_used, 2),
             principal_paid=round(principal, 2),
             annual_rate=month_rate[ymkey],

@@ -1,2 +1,2 @@
-property_name,property_kind,tax_enabled,as_of_date,payoff_date,months_to_clear,years_to_clear,next_payment_date,next_payment_amount,total_interest,total_principal,total_paid_all,out_dir,total_payments_base,total_extras,total_lumps,latest_model_eom_balance,payoff_ym
-Property A,investment,True,,2055-04-05,374,31.17,2026-07-05,2323.44,380987.18,501367.33,875987.1799999997,property-a,875987.1799999997,0.0,0.0,0.0,205504
+property_name,property_kind,tax_enabled,as_of_date,payoff_date,months_to_clear,years_to_clear,next_payment_date,next_payment_amount,total_interest,total_principal,total_paid_all,out_dir,total_contractual,total_overpayment,total_difference,total_lumps,latest_model_eom_balance,payoff_ym
+Property A,investment,True,,2055-04-05,374,31.17,2026-07-05,2123.44,380987.18,501367.33,875987.1799999997,property-a,806105.4699999997,71600.0,-1718.29,0.0,0.0,205504

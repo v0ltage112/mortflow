@@ -59,7 +59,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .helpers import ensure_date, ym_int, growth_to_decimal
+from .helpers import ensure_date, ym_int, growth_to_decimal, month_index
 
 
 # --- Property kind taxonomy -------------------------------------------------
@@ -119,6 +119,26 @@ class RateBlock:
     end_month: int
     annual_rate: float     # decimal p.a., e.g. 0.0365
     kind: str              # 'fixed' or 'variable' (informational)
+
+
+@dataclass
+class ContractualStep:
+    """One agreed contractual instalment, effective from a model month.
+
+    Finance note: the contractual ladder generalises the single
+    ``known_first_payment`` into a list of agreed instalments, one per
+    contractual step (drawdown, then each refix the bank has confirmed). Each
+    step says "from this model month the agreed monthly instalment is this euro
+    amount". Steps the bank has not confirmed yet are simply left out of the
+    ladder, and the engine keeps falling back to the recalculated model PMT,
+    which is clearly a projection rather than an agreed figure. This is the
+    agreed-terms source of truth that the Phase 7 payment attribution reconciles
+    the observed bank debit against; on its own it changes no modelled number.
+    """
+
+    start_month: int        # 1-based model month from drawdown this step applies from
+    amount: float           # agreed contractual instalment in euro
+    source: str = "agreed"  # 'agreed' (bank-confirmed) | 'projection' (model PMT fallback)
 
 
 @dataclass
@@ -230,6 +250,13 @@ class Inputs:
     # Phase 6 / S4: parsed-and-validated payment-holiday windows. Not applied to
     # the schedule yet (parse-and-defer); kept so a future phase can activate it.
     payment_holidays: List[PaymentHoliday] = field(default_factory=list)
+    # Phase 7 / S1: the agreed contractual ladder and the dedicated tolerance for
+    # the payment-level Difference column. Both are optional with behaviour-
+    # preserving defaults: an empty ladder means the engine keeps using
+    # known_first_payment and the RecalculatePayment fallback exactly as before,
+    # and the tolerance is unused until S3 emits the column.
+    contractual_ladder: List[ContractualStep] = field(default_factory=list)
+    payment_unattributed_ok_abs_eur: float = 0.01
 
 
 def _resolve_kind(raw_kind: Optional[str]) -> str:
@@ -391,6 +418,60 @@ def _load_yaml_strict(path: Path) -> dict:
     return yaml.load(Path(path).read_text(), Loader=_StrictLoader)
 
 
+def _resolve_contractual_ladder(raw: dict, drawdown_date: Optional[date]) -> List[ContractualStep]:
+    """Parse the optional ``contractual_ladder`` block into sorted steps.
+
+    Finance note: reads the agreed instalment ladder an analyst enters from the
+    bank's confirmation letters. Each entry carries the agreed monthly instalment
+    plus when it takes effect, given either as a 1-based model ``month`` or as an
+    ISO ``date`` (for example the date printed on the bank letter). Dates are
+    normalised to the model month so the ladder lines up with the rest of the
+    engine, which counts months from drawdown. A file with no ladder returns an
+    empty list, which preserves today's behaviour: the engine falls back to
+    known_first_payment and the recalculated PMT.
+
+    Technical note: additive and side-effect free. The ladder may sit at the top
+    level (alongside rate_blocks) or inside the loan block; the top level wins to
+    mirror how rate_blocks are read. Within an entry an explicit ``month`` wins
+    over a ``date``. A ``date`` needs a known drawdown date to normalise; a date
+    supplied without one is a hard error rather than a silent guess.
+    """
+    # Top level first (mirrors rate_blocks), then the loan block as a fallback.
+    entries = raw.get("contractual_ladder")
+    if entries is None:
+        entries = (raw.get("loan") or {}).get("contractual_ladder")
+    if not entries:
+        # No ladder declared: empty list keeps known_first_payment / PMT behaviour.
+        return []
+
+    steps: List[ContractualStep] = []
+    for e in entries:
+        # Resolve the effective month: an explicit month index wins; otherwise a
+        # date is converted to the 1-based model month counted from drawdown.
+        if e.get("month") is not None:
+            start_month = int(e["month"])
+        elif e.get("date") is not None:
+            if drawdown_date is None:
+                raise ValueError(
+                    "a contractual_ladder entry uses a date but the loan has no "
+                    "drawdown_date to normalise it against; use a month index or "
+                    "add the loan block"
+                )
+            # month_index(drawdown, date) returns the 1-based model month.
+            start_month = month_index(drawdown_date, ensure_date(e["date"]))
+        else:
+            raise ValueError("each contractual_ladder entry needs a 'month' or a 'date'")
+        amount = float(e["amount"])  # agreed instalment in euro; required per entry
+        # 'agreed' marks a bank-confirmed step; 'projection' is reserved for a
+        # future fallback row. Default to agreed since the ladder holds confirmed terms.
+        source = str(e.get("source", "agreed")).strip().lower()
+        steps.append(ContractualStep(start_month=start_month, amount=amount, source=source))
+
+    # Sort by effective month so every consumer reads the ladder in time order.
+    steps.sort(key=lambda s: s.start_month)
+    return steps
+
+
 def load_inputs(path: Path) -> Inputs:
     """Parse the YAML modelling configuration into an :class:`Inputs` object.
 
@@ -480,6 +561,18 @@ def load_inputs(path: Path) -> Inputs:
     drawdown = ensure_date(loan["drawdown_date"]) if loan.get("drawdown_date") else None
     first_pay = ensure_date(loan["first_payment_date"]) if loan.get("first_payment_date") else None
 
+    # Phase 7 / S1: resolve the agreed contractual ladder (dates normalised to
+    # model months using the drawdown date) and the dedicated payment-level
+    # Difference tolerance. Both are additive: an absent block leaves the ladder
+    # empty and the tolerance at its default, so this session changes no figure.
+    contractual_ladder = _resolve_contractual_ladder(raw, drawdown)
+    attribution_cfg = (raw.get("attribution") or {})
+    try:
+        payment_unattributed_ok_abs = float(attribution_cfg.get("payment_unattributed_ok_abs_eur", 0.01))
+    except Exception:
+        # A malformed value degrades to the safe default rather than crashing the run.
+        payment_unattributed_ok_abs = 0.01
+
     return Inputs(
         property_price=float(loan.get("property_price", 0.0)),
         principal_at_drawdown=float(loan.get("principal_at_drawdown", 0.0)),
@@ -503,6 +596,8 @@ def load_inputs(path: Path) -> Inputs:
         meta=meta,
         output=output_cfg,
         payment_holidays=payment_holidays,
+        contractual_ladder=contractual_ladder,
+        payment_unattributed_ok_abs_eur=payment_unattributed_ok_abs,
     )
 
 
