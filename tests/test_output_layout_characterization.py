@@ -141,18 +141,22 @@ TAX_AUDIT_COLUMNS: List[str] = [
 # Valuation-only value-over-time series for a no-loan property.
 VALUATION_SCHEDULE_COLUMNS: List[str] = ["month_start", "ym", "property_value"]
 
-# Portfolio rollup. This is the ACTUAL produced order from the locked fixture,
-# which differs from the runner's ``prefer`` wish-list: the dead KPI columns
-# (property_value_asof, ltv_asof, current_annual_rate, principal_excl_unposted)
-# are never emitted today, so they are deliberately absent here. S4 rebuilds
-# this list; pinning today's shape is what lets S4 prove the change.
+# Portfolio rollup. Phase 8 / S4 rebuilt this list. The runner no longer carries
+# the dead KPI columns it used to list but never emit (property_value_asof,
+# ltv_asof, current_annual_rate, principal_excl_unposted); instead it sources
+# every promised column from a real place: the live position from the current
+# snapshot row of the monthly schedule, the agreed overpayment to date, the
+# Phase 7 attribution health (total_difference plus a count of
+# overpayment_mismatch months), the current-year interest, the projected payoff
+# date, and the Section 97 tax-deductible interest. This pins the rebuilt
+# 15-column contract, in order. (The golden-master fixture re-baseline that
+# follows from this rebuild is owned by S5.)
 PORTFOLIO_SUMMARY_COLUMNS: List[str] = [
     "property_name", "property_kind", "tax_enabled",
-    "as_of_date", "payoff_date", "months_to_clear", "years_to_clear",
-    "next_payment_date", "next_payment_amount",
-    "total_interest", "total_principal", "total_paid_all", "out_dir",
-    "total_contractual", "total_overpayment", "total_difference", "total_lumps",
-    "latest_model_eom_balance", "payoff_ym",
+    "current_balance", "property_value", "ltv", "current_annual_rate",
+    "contractual_payment", "current_overpayment", "total_overpaid_to_date",
+    "total_difference", "overpayment_mismatch_months",
+    "payoff_date", "current_year_interest", "tax_deductible_interest",
 ]
 
 
