@@ -17,6 +17,12 @@ engine's valuation-only path: ``--actuals`` is omitted and the summary row is
 built from ``valuation_schedule.csv`` instead of the loan schedule. Per-property
 enable already worked via the ``enabled`` flag and is unchanged.
 
+Phase 8 / S2 note: the local ``slugify`` was removed and is now imported from
+``src.engine.helpers``. The output folder slug and the per-property workbook
+name (``<slug>_model.xlsx``) are produced by that one function, so the file and
+its folder can never disagree. The slug logic is identical to the copy that
+lived here, so every folder name and the golden master are unchanged.
+
 Technical summary
 -----------------
 ``run_engine_cli`` now takes an optional actuals path and only appends
@@ -37,6 +43,9 @@ from openpyxl.styles import Font  # Phase 6 / S6: build bold fonts directly (Fon
 
 from src.engine import load_inputs  # to pass real inputs to KPIs if supported
 from src.metrics import compute_baseline_kpis
+# Phase 8 / S2: one canonical slugify lives in the engine so the workbook slug
+# and this output-folder slug are produced by the same function and cannot drift.
+from src.engine.helpers import slugify
 # Phase 2 path resolver: output root and per-property paths come from the config
 # layer instead of being assumed relative to the current working directory.
 from src.paths import resolve_out_dir, resolve_relative
@@ -45,20 +54,6 @@ from src.paths import resolve_out_dir, resolve_relative
 # path. Mirrors the canonical owned-outright spellings the schema accepts so the
 # runner agrees with the engine without importing schema internals.
 _VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
-
-def slugify(name: str) -> str:
-    """Turn a property name into a filesystem-safe output folder slug.
-
-    Finance note: the slug is the per-property subfolder under the output root
-    (for example 'Property A' -> 'property-a'), so each property's files land in
-    their own predictable place.
-    """
-    s = name.strip().lower()
-    for ch in [' ', '/', '\\', ',', '.', "'", '"', '&', '(', ')', '[', ']', ':', ';', '|', '?', '!']:
-        s = s.replace(ch, '-')
-    while '--' in s:
-        s = s.replace('--', '-')
-    return s.strip('-')
 
 def load_portfolio(p: Path) -> Dict:
     """Read portfolio.yaml into a dict and check it carries a properties list.
@@ -101,7 +96,7 @@ def fmt_money(ws, col_name):
     col = _header_map(ws).get(col_name)
     if not col: return
     for r in range(2, ws.max_row + 1):
-        ws.cell(row=r, column=col).number_format = "\u20ac#,##0.00"
+        ws.cell(row=r, column=col).number_format = "€#,##0.00"
 
 def fmt_pct(ws, col_name):
     """Apply a percent format to a named column, if it is present."""

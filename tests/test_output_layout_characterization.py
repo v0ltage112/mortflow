@@ -176,10 +176,10 @@ PROPERTY_SHAPES: List[PropertyShape] = [
         kind_label="investment (mortgage + rental tax)",
         inputs=DATA_SAMPLE / "property_a" / "inputs.sample.yaml",
         actuals=DATA_SAMPLE / "property_a" / "actuals.sample.csv",
-        workbook="mortgage_outputs.xlsx",
-        # Tax on, so the TaxYear, TenancyLog, and TaxAudit sheets are present;
-        # Summary is created last and therefore sits at the end.
-        sheets=("Monthly", "Reconcile", "EventsDaily", "TaxYear", "TenancyLog", "TaxAudit", "Summary"),
+        workbook="property-a_model.xlsx",
+        # Phase 8 / S2: workbook renamed to <slug>_model.xlsx; Summary now leads,
+        # a dedicated Valuation sheet follows, then the detail and tax sheets.
+        sheets=("Summary", "Valuation", "Monthly", "Reconcile", "EventsDaily", "TaxYear", "TenancyLog", "TaxAudit"),
         csv_columns={
             "schedule_monthly.csv": MONTHLY_COLUMNS,
             "reconcile.csv": RECONCILE_COLUMNS,
@@ -193,11 +193,10 @@ PROPERTY_SHAPES: List[PropertyShape] = [
         kind_label="primary residence (mortgage, tax off)",
         inputs=DATA_SAMPLE / "property_b" / "inputs.sample.yaml",
         actuals=DATA_SAMPLE / "property_b" / "actuals.sample.csv",
-        workbook="mortgage_outputs.xlsx",
-        # Same mortgage path as Property A but tax is off, so the three tax
-        # sheets and the two tax CSVs are absent. The monthly, reconcile, and
-        # events shapes are identical because they do not depend on tax.
-        sheets=("Monthly", "Reconcile", "EventsDaily", "Summary"),
+        workbook="property-b_model.xlsx",
+        # Phase 8 / S2: workbook renamed to <slug>_model.xlsx; Summary leads and
+        # a Valuation sheet follows. Tax is off, so the three tax sheets stay absent.
+        sheets=("Summary", "Valuation", "Monthly", "Reconcile", "EventsDaily"),
         csv_columns={
             "schedule_monthly.csv": MONTHLY_COLUMNS,
             "reconcile.csv": RECONCILE_COLUMNS,
@@ -211,8 +210,9 @@ PROPERTY_SHAPES: List[PropertyShape] = [
         # No loan means no bank actuals; omitting --actuals is what routes the
         # engine to its valuation-only path.
         actuals=None,
-        workbook="valuation_outputs.xlsx",
-        sheets=("Valuation", "Summary"),
+        workbook="property-c_model.xlsx",
+        # Phase 8 / S2: workbook renamed to <slug>_model.xlsx; Summary now leads.
+        sheets=("Summary", "Valuation"),
         csv_columns={
             "valuation_schedule.csv": VALUATION_SCHEDULE_COLUMNS,
         },

@@ -16,8 +16,9 @@ the error, so keeping this layer clean protects the whole model.
 Technical summary
 -----------------
 Pure, mortgage-unaware functions: date normalisation, month arithmetic, an
-Excel-style PMT, the day-count divisor, and the growth-input normaliser. No
-project state lives here, which keeps the module a safe dependency-free leaf.
+Excel-style PMT, the day-count divisor, the growth-input normaliser, and a
+filesystem slug. No project state lives here, which keeps the module a safe
+dependency-free leaf.
 
 Phase 5 / S1 note: this file was lifted verbatim out of the original
 ``src/engine.py`` "Helpers" section. Behaviour is unchanged; only the module
@@ -28,6 +29,13 @@ the whole-percent-vs-decimal rule that previously existed as three copies
 (``_growth_to_decimal`` in valuation.py, ``_to_dec`` inside
 ``schema.load_inputs``, and an inline coercion in __main__.py). Behaviour is
 identical; the duplicates now call this one function.
+
+Phase 8 / S2 note: ``slugify`` was added here as the single home for the
+property-name-to-slug rule. The output folder name and the per-property
+workbook name (``<slug>_model.xlsx``) are now both derived from this one
+function, so the file and its folder can never disagree. The logic is identical
+to the slug that ``tools/portfolio.py`` used before, which is repointed to this
+one in the same session.
 """
 
 from __future__ import annotations
@@ -148,6 +156,28 @@ def growth_to_decimal(g) -> float:
         g = 0.0
     # A value above 1.0 is read as a whole percent (5 -> 0.05); 0.05 stays as is.
     return (g / 100.0) if g > 1.0 else g
+
+
+def slugify(name: str) -> str:
+    """Turn a property name into a filesystem-safe slug.
+
+    Finance note: the slug is the per-property identity used both for the output
+    sub-folder and for the workbook file name (for example 'Property A' ->
+    'property-a', so the workbook is 'property-a_model.xlsx'). Centralising it
+    here means the folder slug and the workbook slug are produced by one
+    function and can never drift apart.
+    """
+    # Lower-case and trim so 'Property A' and ' property a ' resolve the same.
+    s = (name or "").strip().lower()
+    # Replace every separator or punctuation mark with a hyphen so the result is
+    # safe as a file and folder name on every platform.
+    for ch in [' ', '/', '\\', ',', '.', "'", '"', '&', '(', ')', '[', ']', ':', ';', '|', '?', '!']:
+        s = s.replace(ch, '-')
+    # Collapse any run of hyphens left by adjacent separators into a single one.
+    while '--' in s:
+        s = s.replace('--', '-')
+    # Trim leading/trailing hyphens so the slug never starts or ends with one.
+    return s.strip('-')
 
 
 # Plain-English status line for troubleshooting; stderr only so the CLI's stdout

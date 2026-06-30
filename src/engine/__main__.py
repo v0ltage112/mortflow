@@ -37,6 +37,17 @@ and ``currency`` selects the money mask via ``report.money_number_format``. Ever
 default is on with euro formatting, so an unchanged config writes byte-identical
 outputs and the Gandon golden master stays green. The stdout "Wrote outputs to:"
 line is unchanged.
+
+Phase 8 / S2 note: the workbook is renamed and restructured. It is now named
+``<slug>_model.xlsx`` (the slug is the same one the output folder uses, via
+``helpers.slugify``) instead of the generic ``mortgage_outputs.xlsx``; the
+Summary sheet is moved to the front; a dedicated Valuation sheet (month-end
+property value and the model and bank LTVs, reused from the Monthly schedule) is
+added; and the Phase 7 attribution split totals (contractual, overpayment,
+lump, difference) are surfaced on the Summary. These are file-shape and
+presentation changes only: the engine maths and every reported number are
+unchanged, so the golden master (which checks CSV values) stays green. The CSV
+file names are unchanged here; demoting them into a ``csv/`` subfolder is S3.
 """
 
 from __future__ import annotations
@@ -49,7 +60,7 @@ import pandas as pd
 import yaml
 from openpyxl.styles import Font
 
-from .helpers import ensure_date, growth_to_decimal
+from .helpers import ensure_date, growth_to_decimal, slugify
 from .schema import load_inputs, load_actuals
 from .simulate import run_engine
 # Phase 6 / S4: money_number_format turns the output.currency knob into the Excel
@@ -237,9 +248,18 @@ def main():
     # original euro mask character for character, so a default run moves nothing.
     money_fmt = money_number_format(out_cfg.currency)
 
+    # Phase 8 / S2: name the workbook from the property slug, the same slug the
+    # output folder uses (via helpers.slugify), so each property produces a
+    # clearly named <slug>_model.xlsx (for example property-a_model.xlsx) rather
+    # than a generic mortgage_outputs.xlsx. Fall back to the output folder name,
+    # then a literal "property", if a config somehow carries no meta name.
+    meta_name = inputs.meta.name if (inputs.meta and inputs.meta.name) else None
+    slug = slugify(meta_name) if meta_name else (slugify(out_dir.name) or "property")
+    workbook_name = f"{slug}_model.xlsx"
+
     # XLSX (only when the workbook is switched on) ---------------------------
     if out_cfg.write_excel:
-        with pd.ExcelWriter(out_dir / "mortgage_outputs.xlsx", engine="openpyxl") as xl:
+        with pd.ExcelWriter(out_dir / workbook_name, engine="openpyxl") as xl:
             monthly.to_excel(xl, sheet_name="Monthly", index=False)
             reconcile.to_excel(xl, sheet_name="Reconcile", index=False)
             # The daily EventsDaily sheet is optional under include_daily_events.
@@ -324,6 +344,28 @@ def main():
                     money_format=money_fmt,
                 )
 
+            # ---------------- Valuation (mortgaged property) ----------------
+            # Phase 8 / S2: a dedicated value and loan-to-value view, so the
+            # property-value path is readable on its own tab instead of being
+            # buried among the wide Monthly schedule columns. It reuses figures
+            # already in the monthly schedule (the month-end property value and
+            # the model and bank LTVs), so nothing is recomputed and the numbers
+            # match the Monthly sheet exactly.
+            valuation_view_cols = ["month_start", "ym", "property_value", "ltv_model_eom", "ltv_bank_eom"]
+            # Guard each column so a future schedule that renames or drops one
+            # degrades to a thinner sheet rather than crashing the writer.
+            valuation_view = monthly[[c for c in valuation_view_cols if c in monthly.columns]].copy()
+            valuation_view.to_excel(xl, sheet_name="Valuation", index=False)
+            ws_v = xl.sheets["Valuation"]
+            _add_table(ws_v, "Valuation")
+            _format_sheet(
+                ws_v,
+                money_cols=["property_value"],
+                pct_cols=["ltv_model_eom", "ltv_bank_eom"],
+                date_cols=["month_start"],
+                money_format=money_fmt,
+            )
+
             # ---------------- Summary (values only) ----------------
             ws_s = wb.create_sheet("Summary")
             ws_s.append(["Metric", "Value"])
@@ -333,6 +375,20 @@ def main():
                 if asof_date
                 else {"principal_excl_unposted": None, "ytd_interest_portal": None}
             )
+
+            # Phase 8 / S2: Phase 7 attribution split totals for the Summary, so
+            # the headline sheet shows how the total paid divides into the
+            # contractual amount, the agreed overpayment, any lump, and the
+            # unattributed difference. Summed straight from the monthly schedule;
+            # these are presentation totals, not new engine figures.
+            def _column_total(df, col):
+                """Return a monthly column's sum as a float, or None if absent."""
+                return float(df[col].sum()) if col in df.columns else None
+
+            total_contractual = _column_total(monthly, "contractual")
+            total_overpayment = _column_total(monthly, "overpayment")
+            total_lump = _column_total(monthly, "lump")
+            total_difference = _column_total(monthly, "difference")
 
             rows = [
                 ("As of date (latest bank actual)", asof_date),
@@ -344,6 +400,11 @@ def main():
                 ("Next payment amount", next_pay_amt),
                 ("YTD interest (posted only)", ytd_interest),
                 ("YTD principal (posted only)", ytd_principal),
+                # Phase 8 / S2: Phase 7 attribution split totals over all months.
+                ("Total contractual paid", total_contractual),
+                ("Total overpayment", total_overpayment),
+                ("Total lump", total_lump),
+                ("Total difference (unattributed)", total_difference),
                 ("Portal-style principal (excl. unposted interest)", portal["principal_excl_unposted"]),
                 ("Portal YTD interest (posted + accrual to yesterday)", portal["ytd_interest_portal"]),
                 ("Property value (as-of)", prop_val),
@@ -363,6 +424,11 @@ def main():
                 "Property value (as-of)",
                 "Portal-style principal (excl. unposted interest)",
                 "Portal YTD interest (posted + accrual to yesterday)",
+                # Phase 8 / S2: the attribution split totals are money too.
+                "Total contractual paid",
+                "Total overpayment",
+                "Total lump",
+                "Total difference (unattributed)",
             }
             pct_keys = {"LTV (as-of)", "Current annual rate"}
             date_keys = {"As of date (latest bank actual)", "Next payment date"}
@@ -378,6 +444,14 @@ def main():
                     v.number_format = "yyyy-mm-dd"
             ws_s.column_dimensions["A"].width = 48
             ws_s.column_dimensions["B"].width = 28
+
+            # Phase 8 / S2: present Summary first, then the Valuation view, then
+            # the detail sheets in their existing creation order. Reordering tabs
+            # is purely cosmetic; no value or formula is touched.
+            lead = ["Summary", "Valuation"]
+            wb._sheets = [wb[t] for t in lead if t in wb.sheetnames] + [
+                ws for ws in wb._sheets if ws.title not in lead
+            ]
 
     # CSVs (only when CSV output is switched on) -----------------------------
     if out_cfg.write_csv:
