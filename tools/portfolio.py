@@ -41,6 +41,15 @@ property's own Summary sheet), because the schedule projects all the way to
 payoff and its final row is the payoff month rather than today. Engine maths is
 unchanged; this is a read-and-aggregate layer only.
 
+Phase 8 / S5 note: the snapshot date is now made explicit. ``as_of_date`` is
+added as the first rollup column so a reader can see, on the rollup itself, the
+date the whole row is a snapshot of. It was deliberately left out of the locked
+15 in S4; surfacing it is the only column change in S5 and moves the lock from
+15 to 16 columns. For a mortgage row the value is the same deterministic as-of
+date the live-position figures are already anchored on; for a valuation-only row
+it is the run date, matching the as-of-today value that row already reports.
+Engine maths is still untouched.
+
 Technical summary
 -----------------
 ``run_engine_cli`` appends ``--actuals`` only when one is given. The main loop
@@ -80,6 +89,7 @@ DEFAULT_CSV_SUBDIR = "csv"
 # Phase 8 / S4: the locked final column order for the rebuilt rollup. The
 # friendly labels from the session scope map one-to-one onto these machine-
 # friendly keys (kept snake_case to match every other CSV the suite pins):
+#   as_of_date                   -> As-of date (Phase 8 / S5)
 #   property_name                -> Property
 #   property_kind                -> Kind
 #   tax_enabled                  -> Tax on
@@ -95,7 +105,12 @@ DEFAULT_CSV_SUBDIR = "csv"
 #   payoff_date                  -> Projected payoff date
 #   current_year_interest        -> Annual interest (current year)
 #   tax_deductible_interest      -> Tax-deductible interest (when tax on)
+#
+# Phase 8 / S5: as_of_date leads the list so the snapshot date is visible on the
+# rollup itself. It was kept out of the locked 15 in S4; making it explicit is
+# the only column change in S5 and moves the lock from 15 to 16 columns.
 LOCKED_SUMMARY_COLUMNS = [
+    "as_of_date",
     "property_name", "property_kind", "tax_enabled",
     "current_balance", "property_value", "ltv", "current_annual_rate",
     "contractual_payment", "current_overpayment", "total_overpaid_to_date",
@@ -251,7 +266,7 @@ def fmt_money(ws, col_name):
     col = _header_map(ws).get(col_name)
     if not col: return
     for r in range(2, ws.max_row + 1):
-        ws.cell(row=r, column=col).number_format = "€#,##0.00"
+        ws.cell(row=r, column=col).number_format = "\u20ac#,##0.00"
 
 def fmt_pct(ws, col_name):
     """Apply a percent format to a named column, if it is present."""
@@ -299,16 +314,17 @@ def write_summary_xlsx(df: pd.DataFrame, path: Path):
             pass
 
         # Phase 8 / S4: number formats follow the rebuilt locked columns. Money
-        # columns are the euro figures; the two rates are percentages; the payoff
-        # date is a date. The mismatch-month count is a plain integer and needs
-        # no mask.
+        # columns are the euro figures; the two rates are percentages; the date
+        # columns are dates. The mismatch-month count is a plain integer and
+        # needs no mask.
+        # Phase 8 / S5: as_of_date joins payoff_date in the date-formatted set.
         money_cols = [
             "current_balance", "property_value", "contractual_payment",
             "current_overpayment", "total_overpaid_to_date", "total_difference",
             "current_year_interest", "tax_deductible_interest",
         ]
         pct_cols = ["ltv", "current_annual_rate"]
-        date_cols = ["payoff_date"]
+        date_cols = ["as_of_date", "payoff_date"]
 
         for c in money_cols: fmt_money(ws, c)
         for c in pct_cols: fmt_pct(ws, c)
@@ -342,6 +358,8 @@ def _mortgage_summary_row(
 
     Finance note: this is the rebuilt rollup row. Every promised column is
     populated and sourced explicitly, so nothing is silently dropped:
+      * As-of date (Phase 8 / S5) is the snapshot date the rest of the row is
+        taken at, surfaced as the first column so the date is visible.
       * Current balance / Property value / LTV / Current rate / Contractual
         payment / Current overpayment per month come from the current snapshot
         row, which is the last monthly row on or before the as-of date. The
@@ -413,6 +431,8 @@ def _mortgage_summary_row(
         return float(value) if pd.notna(value) else None
 
     return {
+        # Phase 8 / S5: lead with the snapshot date the whole row is taken at.
+        "as_of_date": as_of,
         "property_name": name,
         "property_kind": kind,
         "tax_enabled": tax_enabled,
@@ -436,9 +456,10 @@ def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: boo
     Finance note: an owned-outright property has no loan, so every loan and
     attribution column is blank. Its one meaningful figure in the rollup is the
     current property value, read from valuation_schedule.csv at the row on or
-    before today. This is the only field in the whole rollup anchored on the run
-    date, because a no-loan property has no bank actuals to date it from; every
-    other locked column is left unset and shows blank in the combined summary.
+    before today. The as-of date here is the run date, because a no-loan
+    property has no bank actuals to date it from, and the value it reports is the
+    as-of-today value; every other locked column is left unset and shows blank
+    in the combined summary.
 
     Phase 8 / S3: ``csv_dir`` is the property's csv/ sub-folder, where the engine
     now writes the CSV.
@@ -454,6 +475,9 @@ def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: boo
     mask = month_starts.apply(lambda d: d is not None and d <= today)
     current = sched.loc[mask].iloc[-1] if mask.any() else sched.iloc[-1]
     return {
+        # Phase 8 / S5: the snapshot date for a no-loan property is the run date,
+        # matching the as-of-today property value reported below.
+        "as_of_date": today,
         "property_name": name,
         "property_kind": kind,
         "tax_enabled": tax_enabled,

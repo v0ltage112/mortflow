@@ -14,6 +14,11 @@ against the bundled sample portfolio and checks that the rollup carries exactly
 the locked columns, in order, and that the single sample row is genuinely
 populated and sane, so a silently dropped column fails loudly.
 
+Phase 8 / S5: the rollup gains an explicit ``as_of_date`` first column so the
+snapshot date the whole row is taken at is visible. The locked column list below
+moves from 15 to 16 columns, and the populated-row check also confirms the
+as-of date reads as an ISO date.
+
 Technical summary
 -----------------
 Runs tools.baseline then tools.portfolio against data_sample/portfolio.yaml into
@@ -35,9 +40,12 @@ import pandas as pd
 import pytest
 
 
-# The locked final column order for the rebuilt rollup (Phase 8 / S4). This is
-# the contract the runner writes and the order a reviewer reads left to right.
+# The locked final column order for the rebuilt rollup (Phase 8 / S4, extended in
+# S5). This is the contract the runner writes and the order a reviewer reads left
+# to right. Phase 8 / S5 adds as_of_date as the first column (15 -> 16), matching
+# the runner's LOCKED_SUMMARY_COLUMNS and the characterization test.
 EXPECTED_PORTFOLIO_COLUMNS = [
+    "as_of_date",
     "property_name", "property_kind", "tax_enabled",
     "current_balance", "property_value", "ltv", "current_annual_rate",
     "contractual_payment", "current_overpayment", "total_overpaid_to_date",
@@ -131,6 +139,11 @@ def test_rollup_row_is_populated_and_sane(rollup: pd.DataFrame) -> None:
     fixed-rate window, so the current annual rate must be 3.65%.
     """
     row = rollup.iloc[0]
+
+    # Phase 8 / S5: the as-of date is now an explicit first column. For Property A
+    # it is the deterministic mid-2026 snapshot date, so it reads as an ISO date
+    # string (yyyy-mm-dd).
+    assert isinstance(row["as_of_date"], str) and row["as_of_date"][:4].isdigit()
 
     # Rental tax is on for Property A.
     assert bool(row["tax_enabled"]) is True

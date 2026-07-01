@@ -39,6 +39,13 @@ stay at the root. This test therefore looks for each workbook at the property
 root and every CSV inside ``csv/``, and the rollup CSV inside a top-level
 ``csv/``. The committed golden fixtures are intentionally left where they are;
 the S5 re-baseline owns moving them.
+
+Phase 8 / S5 note
+-----------------
+The portfolio rollup gains an explicit ``as_of_date`` first column, so the
+locked rollup column list below moves from 15 to 16 columns. This is the only
+shape change in S5; the per-property file names, sheet tabs, and CSV columns are
+unchanged, and the golden-master fixture for the rollup is re-baselined to match.
 """
 from __future__ import annotations
 
@@ -148,10 +155,13 @@ VALUATION_SCHEDULE_COLUMNS: List[str] = ["month_start", "ym", "property_value"]
 # snapshot row of the monthly schedule, the agreed overpayment to date, the
 # Phase 7 attribution health (total_difference plus a count of
 # overpayment_mismatch months), the current-year interest, the projected payoff
-# date, and the Section 97 tax-deductible interest. This pins the rebuilt
-# 15-column contract, in order. (The golden-master fixture re-baseline that
-# follows from this rebuild is owned by S5.)
+# date, and the Section 97 tax-deductible interest.
+# Phase 8 / S5: as_of_date is added as the first column so the snapshot date the
+# whole row is taken at is visible on the rollup itself. This moves the lock from
+# 15 to 16 columns, in order, and the golden-master fixture is re-baselined to
+# match.
 PORTFOLIO_SUMMARY_COLUMNS: List[str] = [
+    "as_of_date",
     "property_name", "property_kind", "tax_enabled",
     "current_balance", "property_value", "ltv", "current_annual_rate",
     "contractual_payment", "current_overpayment", "total_overpaid_to_date",

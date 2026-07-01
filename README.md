@@ -211,7 +211,7 @@ The pytest suite covers reconciliation tolerances, interest accrual, valuation b
 pytest -q
 ```
 
-Expected: **64 passed, 2 skipped, 0 failed**.
+Expected: **90 passed, 2 skipped, 0 failed**.
 
 Run the tests after dependency updates or when you change the engine/tax logic to ensure both the financial maths and tax outputs stay within contract tolerances.
 
@@ -245,6 +245,7 @@ Remove those months from the tenancy file or configure `deductible_window` range
 | v1.6.0 | 2026-06-17 | engine.py refactored into a src/engine/ package behind a re-export facade; run_engine decomposed into simulate / monthly / reconcile / valuation; helper dedupe and dead-import cleanup. No behaviour change. |
 | v1.7.0 | 2026-06-19 | Multi-property scaffolding & toggles: a property kind drives independent mortgage / tax / valuation modules, including a no-mortgage valuation-only path; ignored YAML knobs (output.*) now honoured and payment_holidays parse-and-defer; three-property sample data (Gandon investment, Somerton primary, Paragon owned-outright) with portfolio enable / kind toggles. Gandon golden master unchanged. |
 | v1.8.0 | 2026-06-29 | Overpayment attribution. Each monthly payment now splits into contractual, overpayment, lump, and an explicit Difference residual, driven by agreed terms rather than the merge flag. Conserved quantities (total paid, interest, principal, balance, payoff) byte-identical to v1.7.0; only the attribution columns are new, renamed, or reordered. Legacy payment_amount and extra_amount columns retired; portfolio KPIs report total_contractual / total_overpayment / total_difference and the next-payment figure reports the contractual instalment. Golden master re-baselined to the new column set. |
+| v1.9.0 | 2026-06-30 | Output deliverables. Each property now gets its own `<slug>_model.xlsx` workbook (Summary sheet first, plus a Valuation sheet and the Phase 7 attribution-split totals), every CSV is demoted into a `csv/` subfolder behind an `output.csv_subdir` knob, and the top-level `portfolio_summary.xlsx` rollup is rebuilt to surface the attribution columns, the Section 97 tax-deductible interest, and an explicit `as_of_date` snapshot date. Engine maths byte-identical to v1.8.0: only the output file shape moved, no figure changed. Golden master re-baselined to the new file set and paths. |
 
 
 ---
