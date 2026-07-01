@@ -16,6 +16,14 @@ actuals file, so there is nothing to baseline. Such a property is skipped here;
 its value over time is produced by the engine's valuation-only path and rolled
 up by tools/portfolio.py instead. Without this skip the loop would raise
 KeyError on the missing actuals path and take the whole run down with it.
+
+Phase 8 / S3 note: the three frozen baseline CSVs (``baseline_monthly.csv``,
+``baseline_reconcile.csv``, ``baseline_events_daily.csv``) are now written into
+the property's ``output.csv_subdir`` sub-folder (default ``csv``) rather than
+beside the KPI workbook, matching the engine's writer paths. The
+``baseline_kpis.xlsx`` and the ``baseline.effective.inputs.yaml`` snapshot stay
+at the property root. CSV contents are unchanged, so the golden master (which
+compares CSV values) stays green; only the paths moved.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -100,11 +108,23 @@ def _sanitize_for_strict_baseline(cfg: dict) -> dict:
     return c
 
 
-def _write_outputs(out_dir: Path, monthly, reconcile, events) -> None:
+def _write_outputs(out_dir: Path, monthly, reconcile, events, csv_subdir: str) -> None:
+    """Write the three frozen baseline CSVs into the property's csv/ sub-folder.
+
+    Phase 8 / S3: the baseline CSVs are demoted into ``csv_subdir`` (default
+    "csv"), matching the engine writer paths, so a property folder shows the
+    baseline_kpis.xlsx and the effective-inputs YAML at its root and the frozen
+    CSVs under csv/. An empty csv_subdir restores the old flat layout. CSV
+    contents are unchanged, so the golden master (which compares CSV values)
+    stays green.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
-    monthly.to_csv(out_dir / "baseline_monthly.csv", index=False)
-    reconcile.to_csv(out_dir / "baseline_reconcile.csv", index=False)
-    events.to_csv(out_dir / "baseline_events_daily.csv", index=False)
+    # The frozen CSVs go under csv_subdir; an empty value keeps them at out_dir.
+    csv_dir = (out_dir / csv_subdir) if csv_subdir else out_dir
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    monthly.to_csv(csv_dir / "baseline_monthly.csv", index=False)
+    reconcile.to_csv(csv_dir / "baseline_reconcile.csv", index=False)
+    events.to_csv(csv_dir / "baseline_events_daily.csv", index=False)
 
 
 def _run_single(inputs_path: Path, actuals_path: Path, out_dir: Path, *, strict_baseline: bool) -> dict:
@@ -125,7 +145,10 @@ def _run_single(inputs_path: Path, actuals_path: Path, out_dir: Path, *, strict_
     actuals = load_actuals(actuals_path)
     monthly, reconcile, events = run_engine(inputs, actuals)
 
-    _write_outputs(out_dir, monthly, reconcile, events)
+    # Phase 8 / S3: route the frozen CSVs into the property's csv/ sub-folder
+    # (the knob the schema parsed onto inputs.output). The KPI workbook and the
+    # effective-inputs YAML below stay at the property root.
+    _write_outputs(out_dir, monthly, reconcile, events, inputs.output.csv_subdir)
 
     # KPIs (BC: pass inputs/monthly/events for richer fields, e.g. as_of_date)
     k = compute_baseline_kpis(inputs, monthly, events)

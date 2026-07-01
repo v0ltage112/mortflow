@@ -20,8 +20,8 @@ block (with a fall back to any loan-derived fields already on ``Inputs``).
 ``build_valuation_schedule`` walks ``monthly.month_span`` and values each month
 through the shared ``valuation.property_value_on`` so the growth/revaluation
 maths has exactly one definition across the package. ``write_valuation_outputs``
-saves ``valuation_schedule.csv`` and a formatted ``valuation_outputs.xlsx`` via
-the shared ``report`` helpers. ``run_valuation_only`` orchestrates the three.
+saves ``valuation_schedule.csv`` and a formatted ``<slug>_model.xlsx`` via the
+shared ``report`` helpers. ``run_valuation_only`` orchestrates the three.
 
 Phase 6 / S3 note: new module. The CLI (``src/engine/__main__.py``) branches to
 ``run_valuation_only`` when ``meta.mortgage_enabled`` is False, so a no-mortgage
@@ -29,11 +29,22 @@ property runs end to end instead of crashing in the loan engine. Mortgage-
 bearing properties never enter this path and are byte-for-byte unchanged.
 
 Phase 6 / S4 note: the writer now honours the parsed ``output`` block. ``write_csv``
-gates ``valuation_schedule.csv``; ``write_excel`` gates ``valuation_outputs.xlsx``;
-``currency`` selects the money mask via ``report.money_number_format``.
-``include_daily_events`` does not apply because there is no daily event log on
-this path. Every default is on with euro formatting, so a default valuation-only
-run is identical to S3.
+gates ``valuation_schedule.csv``; ``write_excel`` gates the workbook; ``currency``
+selects the money mask via ``report.money_number_format``. ``include_daily_events``
+does not apply because there is no daily event log on this path. Every default is
+on with euro formatting, so a default valuation-only run is identical to S3.
+
+Phase 8 / S2 note: the workbook is renamed to ``<slug>_model.xlsx`` (the slug
+from ``helpers.slugify``, the same one the output folder uses) instead of the
+generic ``valuation_outputs.xlsx``, and the Summary sheet is moved to the front
+so it leads the Valuation sheet. These are file-name and tab-order changes only;
+the value-over-time figures are unchanged.
+
+Phase 8 / S3 note: the value-over-time CSV (``valuation_schedule.csv``) is now
+written into the ``output.csv_subdir`` sub-folder (default ``csv``) rather than
+beside the workbook, matching the mortgage path. The workbook stays at the
+property root; an empty ``csv_subdir`` restores the flat layout. The figures are
+unchanged.
 """
 
 from __future__ import annotations
@@ -48,7 +59,7 @@ import pandas as pd
 import yaml
 from openpyxl.styles import Font
 
-from .helpers import ensure_date, growth_to_decimal
+from .helpers import ensure_date, growth_to_decimal, slugify
 from .schema import Inputs, ValuationBlock
 from .valuation import property_value_on
 from .monthly import month_span
@@ -183,26 +194,47 @@ def write_valuation_outputs(
     """Write the valuation-only CSV and a formatted XLSX workbook.
 
     Finance note: saves the value-over-time table as a plain CSV (for machines
-    and fixtures) and as a readable Excel workbook with a Valuation sheet and a
-    one-look Summary sheet (base value, growth, horizon value). Formatting only;
-    no figure is changed here.
+    and fixtures) and as a readable Excel workbook with a one-look Summary sheet
+    (base value, growth, horizon value) followed by the Valuation sheet.
+    Formatting and file naming only; no figure is changed here.
 
-    Phase 6 / S4: the ``output`` block now gates the two artefacts and selects
-    the money mask. Defaults are on with euro formatting, so a default run is
+    Phase 6 / S4: the ``output`` block gates the two artefacts and selects the
+    money mask. Defaults are on with euro formatting, so a default run is
     identical to S3. ``include_daily_events`` is not consulted because this path
     has no daily event log.
+
+    Phase 8 / S2: the workbook is named ``<slug>_model.xlsx`` (same slug as the
+    output folder) and the Summary sheet leads the Valuation sheet.
+
+    Phase 8 / S3: the CSV is demoted into the ``output.csv_subdir`` sub-folder
+    (default ``csv``); the workbook stays at the property root.
     """
     # Phase 6 / S4: honour the output knobs. write_csv and write_excel gate the
     # two artefacts; currency selects the money symbol used in the workbook.
     out_cfg = inputs.output
     money_fmt = money_number_format(out_cfg.currency)
 
+    # Phase 8 / S2: name the workbook from the property slug, the same slug the
+    # output folder uses (via helpers.slugify), so a valuation-only property
+    # produces <slug>_model.xlsx (for example property-c_model.xlsx) instead of a
+    # generic valuation_outputs.xlsx. Fall back to the folder name, then
+    # "property", if a config somehow carries no meta name.
+    meta_name = inputs.meta.name if (inputs.meta and inputs.meta.name) else None
+    slug = slugify(meta_name) if meta_name else (slugify(out_dir.name) or "property")
+    workbook_name = f"{slug}_model.xlsx"
+
     # CSV first: machine-readable and friendly to a future locked fixture.
+    # Phase 8 / S3: the valuation CSV is demoted into out_cfg.csv_subdir
+    # (default "csv"), matching the mortgage path, so an owned-outright folder
+    # also shows <slug>_model.xlsx + a tidy csv/ folder. An empty csv_subdir
+    # keeps the old flat layout.
     if out_cfg.write_csv:
-        schedule.to_csv(out_dir / "valuation_schedule.csv", index=False)
+        csv_dir = (out_dir / out_cfg.csv_subdir) if out_cfg.csv_subdir else out_dir
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        schedule.to_csv(csv_dir / "valuation_schedule.csv", index=False)
 
     if out_cfg.write_excel:
-        with pd.ExcelWriter(out_dir / "valuation_outputs.xlsx", engine="openpyxl") as xl:
+        with pd.ExcelWriter(out_dir / workbook_name, engine="openpyxl") as xl:
             schedule.to_excel(xl, sheet_name="Valuation", index=False)
             wb = xl.book
             ws_v = xl.sheets["Valuation"]
@@ -256,6 +288,13 @@ def write_valuation_outputs(
                     v.number_format = "yyyy-mm-dd"
             ws_s.column_dimensions["A"].width = 28
             ws_s.column_dimensions["B"].width = 28
+
+            # Phase 8 / S2: Summary leads, Valuation follows. Cosmetic tab order
+            # only; no value is touched.
+            lead = ["Summary", "Valuation"]
+            wb._sheets = [wb[t] for t in lead if t in wb.sheetnames] + [
+                ws for ws in wb._sheets if ws.title not in lead
+            ]
 
 
 def run_valuation_only(inputs: Inputs, inputs_path: Path, out_dir: Path) -> pd.DataFrame:

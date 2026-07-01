@@ -1,5 +1,14 @@
-pandas==3.0.3
-numpy==2.4.6
-PyYAML==6.0.3
-openpyxl==3.1.5
-pytest==9.1.0
+# mortflow runtime dependencies.
+#
+# Each library below is a tool the model leans on. The inline note says, in
+# plain finance terms, what each one brings to a daily ACT/365 mortgage cashflow
+# model, so the list reads without a Python background. Versions are pinned
+# exactly on purpose: a dependency bump can quietly change rounding, sorting, or
+# file formatting, which would move the golden master, so every machine and every
+# future run installs the same tools and reproduces the same numbers.
+
+pandas==3.0.3      # The spreadsheet-in-code. Holds every table the model builds (the day-by-day events, the monthly schedule, the bank reconciliation, the tax-year roll-up) and does the grouping, filtering, and summing behind each total. This is what turns raw bank transactions into the monthly schedule and the portfolio rollup.
+numpy==2.4.6       # The fast maths engine underneath pandas. Does the heavy number-crunching (the daily interest arithmetic across thousands of rows) quickly and to consistent precision. Rarely called directly; pandas stands on top of it.
+PyYAML==6.0.3      # The reader for the plain-text settings files (inputs.yaml, portfolio.yaml, tenancy files). Turns the human-edited assumptions — rates, dates, instalments, overpayment terms, on/off toggles — into data the engine can use. This is how your contract terms get into the model.
+openpyxl==3.1.5    # The Excel writer. Produces the .xlsx workbooks you open by hand (each property's model workbook and the portfolio summary), including the sheet tabs, the bold headers, and the euro / percent / date number formats.
+pytest==9.1.0      # The test runner. Runs the safety checks — above all the golden master that proves not a single figure moved, plus the layout checks — so a change can be confirmed safe before it ships. A development tool, not part of producing a single run's outputs.
