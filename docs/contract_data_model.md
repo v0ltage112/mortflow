@@ -197,3 +197,97 @@ Two-contract loan across a refix with a standing overpayment:
 - S5: lender profile schema (effective-dated `rule_versions` plus rationale plus money-market rates), the rule-resolution anchor, cap-basis variants, the breakage formula catalog, the full cascade / ripple map, and the migration plus golden re-baseline (refactor before re-data).
 - S6: anonymisation mapping (real to sample), the committed sample files, the private real-data blocks, and the confirmed Phase 10 session breakdown.
 - Open decision for S5: which date anchors each rule lookup. Proposed default: the overpayment cap and the payment-date convention resolve on the event or contract-period date; breakage rates resolve on the breakage-quote date.
+
+---
+
+# Section B (P9/S5): Lender profile integration, cascade map, migration
+
+> Authored in P9/S5. Fulfils the S5 items deferred in A10. The rules-layer
+> authority is docs/lender_profile.md; this section does not restate the profile
+> schema, it references it and specifies how the profile plugs into the model,
+> which repo files change, and how the migration stays byte-identical before the
+> one deliberate re-baseline.
+
+## B0. Section B scope
+
+Section A locked the loan / contract split and the Contract object. Section B
+specifies how the per-lender profile (defined in docs/lender_profile.md) plugs
+into that model, maps every repo file the change touches, and locks the
+migration and golden re-baseline strategy for Phase 10.
+
+## B1. Profile integration
+
+- Each loan carries a lender key. On load, the engine resolves the profile
+  (boi.local.yaml when present, else sample_lender.yaml) into the typed inputs.
+- A Contract inherits the profile rule in force at its dates (LP7 anchors)
+  unless it carries an explicit overpayment_cap_override or breakage_override
+  (Section A). An override wins for that contract only.
+- Resolution is by date, not by position: the rule version is the latest
+  effective_from <= anchor date, and the anchor differs per rule (LP7).
+
+## B2. Cascade / ripple map
+
+Every repo file the contracts array and the profile touch, with the change
+described. Verified against the live code (Phase 9 changed no engine code, so
+main and this branch are identical for these files).
+
+| File | Change |
+| --- | --- |
+| src/engine/schema.py | Largest change. Replace RateBlock/rate_blocks, ContractualStep/contractual_ladder, overpay_rules, known_first_payment, scalar overpayment_cap_pct, strategy_at_refix, and payment_holidays parsing with the Loan + contracts array (Section A). Add the lender key and a profile loader (read the profile file, parse rule_versions + money_market_rates, expose a resolver). Restructure Inputs to carry contracts and the resolved profile; keep property_price, drawdown_date, property_growth_pa, total_term_months, tax/output blocks as loan-level. |
+| src/engine/monthly.py | build_rate_lookup moves from rate_blocks (month numbers) to a contracts-derived month-to-rate lookup (convert each contract start_date/end_date to month offsets from drawdown_date). month_tables: recurring_by_month moves from overpay_rules (start_month) to standing_overpayment date windows. default_payment_date (currently clamp_day on repayment_day_default) is the payment-date-convention hook: day_clamp today; routed through the profile convention at the re-baseline step. derive_modelling_end unchanged. |
+| src/engine/simulate.py | payment_for_month (uses rate_blocks.start_month, known_first_payment, strategy_at_refix, pmt) becomes contract-driven: the contract instalment where stated, the PMT fallback where null, a refix handled as a new Contract boundary. _ladder_amount_for_month (reads contractual_ladder) is replaced by per-Contract instalment. lumps_by_date (from lump_sums) unchanged. |
+| src/engine/reconcile.py | No change. Reads only reconcile_ok_abs_eur; touches no rate, cap, or payment-date construct. |
+| src/engine/report.py | compute_portal_style_metrics calls build_rate_lookup(inputs.rate_blocks) and reads inputs.day_count; repoint to the contracts-derived rate lookup and take day_count from the profile. Formatting code unchanged. |
+| src/engine/__main__.py | Low touch. Reads inputs.property_price, property_growth_pa, drawdown_date (stay loan-level), output, tax, and reconcile.snapshots; consumes monthly/events columns whose names do not change. Update only the field access if Inputs field names move. |
+| src/metrics.py | Low touch. compute_baseline_kpis reads monthly columns (contractual, overpayment, difference, lump, total_paid, interest_used, principal_paid, model_eom_balance, payment_date, ym) and inputs.modelling.as_of_date; no rate/cap construct. Safe as long as the monthly column vocabulary is preserved. |
+| tools/portfolio.py | Low touch. load_inputs, compute_baseline_kpis, reads inputs.output.csv_subdir and reconcile.snapshots, consumes the locked monthly/summary columns. Safe if column names and output.csv_subdir are preserved. |
+| tools/baseline.py | Real change. _sanitize_for_strict_baseline currently strips overpay_rules, lump_sums, and bank.merge_standing_extra_into_payment. Update it to strip the new contract-level standing_overpayment (per Contract) and lump_sums so the strict baseline stays contract-only under the new schema. This drives baseline_monthly.csv, so it must be exactly equivalent. |
+| data_sample/property_*/inputs.sample.yaml | Migrate to the Loan + contracts + lender schema. Add data/lenders/sample_lender.yaml. The Somerton (B) rewrite from the real S2 terms is Phase 10 (S6 authors the data). |
+| data_sample/portfolio.yaml | Minimal. Lender lives in each property inputs.yaml loan block, not here. Add a top-level lenders-folder path only if the loader needs it. |
+| .gitignore | Add data/lenders/*.local.yaml so the private profile is never committed. |
+| tests/fixtures/golden/* | schedule_monthly.csv, baseline_monthly.csv, portfolio_summary.csv stay byte-identical through the refactor step; re-baselined only at the Modified Following step (B4). |
+| tests/* | Update every test that builds Inputs or references the retired constructs: test_run_engine_characterization.py, test_attribution_characterization.py, test_attribution_split.py, test_golden_master.py, test_merge_extra_guard.py, test_metrics_baseline.py, test_valuation_blocks.py, test_meta_passthrough.py, test_output_layout_characterization.py, test_output_structure.py, test_portfolio_rollup.py, test_reconcile_ok.py, test_smoke.py, and conftest.py fixtures. Add profile-loader and rule-resolution tests. |
+
+## B3. Migration: refactor-before-re-data
+
+Ordering, so each step is independently provable:
+
+1. Introduce the profile loader and the contracts schema alongside the existing
+   fields (additive parse). No consumer switched yet. Green.
+2. Repoint the rate lookup (monthly.py, report.py) and the instalment logic
+   (simulate.py) from rate_blocks / known_first_payment / contractual_ladder to
+   the contracts-derived equivalents. Convert the sample inputs.yaml to the new
+   schema, encoding the same rates, instalments, and windows. Keep
+   payment_date_convention resolving to day_clamp (today's behaviour). The
+   golden must stay byte-identical here.
+3. Retire the dead scalar overpayment_cap_pct and move the cap + breakage into
+   the profile as data. Neither is consumed for an output figure, so still
+   byte-identical.
+4. Update tools/baseline.py sanitiser to the new schema and confirm
+   baseline_monthly.csv is unchanged.
+
+Invariant for steps 1 to 4: the Gandon golden output does not move by a cent.
+This is the refactor half.
+
+## B4. Golden re-baseline and the byte-identical invariant
+
+- What stays identical through B3: rate resolution per month, projected payment
+  dates (still day_clamp), every conserved quantity, and the full
+  monthly/reconcile/summary column set.
+- The one deliberate behaviour change is the payment-date convention: switching
+  the projection path from day_clamp to modified_following (LP7, S3 decision d)
+  moves projected future payment dates, which appear in the Gandon golden (the
+  schedule projects to 2059). This is the re-data half: flip the engine to
+  honour the profile convention, add the Irish business-day calendar, then
+  re-baseline schedule_monthly.csv (and any dependent fixture) in a single
+  reviewed step. Actual posted dates from the bank feed are never overridden.
+- Ship: Phase 10 v2.0.0 (rollback v1.9.0). The re-baseline lands inside Phase
+  10, not in this analysis phase.
+
+## B5. Carried forward and deferred to S6
+
+- Carried forward from S1 to S4: all Section A locks, plus the S3 decisions
+  (cap, breakage type, Modified Following, ACT/365, per-account payment day).
+- Deferred to S6: the anonymisation mapping (real to sample), the committed
+  sample profile values, the private boi.local.yaml real values, the Somerton
+  inputs.yaml rewrite, and the confirmed Phase 10 session breakdown.
