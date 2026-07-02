@@ -40,6 +40,18 @@ base payment, or the interest posting, so every existing figure (total paid,
 interest, principal, balance, payoff) stays byte-identical to v1.7.0. The value
 is threaded through ``DailyRunResult`` to ``build_monthly_schedule``, which
 emits it as the new ``contractual_payment`` monthly column.
+
+Phase 10 / S2 note: the rate path and the instalment are repointed onto the
+date-based contracts model. ``_simulate_daily`` now takes its rate lookup from
+``rate_lookup_for(inputs)``, and ``payment_for_month`` reads the contract in
+effect: a contract that states an ``instalment`` carries it, and a refix (a new
+contract start month) with no stated instalment recomputes the PMT over the
+remaining term, exactly as the retired rate-block refix did. The
+contractual-baseline capture prefers the in-effect contract's stated
+instalment. Every branch keeps a legacy fallback (rate_blocks,
+known_first_payment, and the contractual_ladder) for files with no contracts,
+so the still-legacy Property B/C samples are unchanged and Property A's schedule
+is byte-identical to the pre-migration model.
 """
 
 from __future__ import annotations
@@ -64,6 +76,7 @@ from .schema import Inputs
 from .valuation import property_value_on
 from .monthly import (
     build_rate_lookup,
+    rate_lookup_for,
     derive_modelling_end,
     month_tables,
     build_monthly_schedule,
@@ -75,28 +88,78 @@ from .reconcile import build_reconcile
 # Engine (daily simulation)
 # =====================================================================
 
+def _contract_for_month(inputs: Inputs, mnum: int) -> Optional[object]:
+    """Return the contract in effect for a 1-based model month, or None.
+
+    Finance note: contracts are time-ordered (sorted by start_date in the
+    loader), so the contract in force is the last one whose start month has been
+    reached by this model month. Returns None when the loan carries no contracts
+    (a legacy file), which is the signal to use the rate_blocks fallback.
+    """
+    if not inputs.contracts:
+        return None
+    chosen = inputs.contracts[0]
+    for c in inputs.contracts:
+        if month_index(inputs.drawdown_date, c.start_date) <= mnum:
+            chosen = c
+        else:
+            break
+    return chosen
+
+
+def _contract_start_months(inputs: Inputs) -> set:
+    """Return the set of 1-based model months on which a contract starts.
+
+    Finance note: a contract start after the first is a refix, the point at
+    which a RecalculatePayment loan recomputes its instalment over the remaining
+    term. This mirrors the retired \"is this a rate-block start month?\" test.
+    """
+    return {month_index(inputs.drawdown_date, c.start_date) for c in inputs.contracts}
+
+
 def payment_for_month(
     inputs: Inputs, mnum: int, annual_rate: float, balance: float, months: pd.DataFrame, last_known_payment_base: float
 ) -> float:
     """Return the scheduled payment for a model month when none is provided.
 
     Finance note: in months where the bank statement has no payment line, this
-    decides the instalment to assume: the known first payment, a recalculated
-    PMT at a refix, or the last base payment carried forward. It sets projected
-    principal and interest in unobserved months.
+    decides the instalment to assume: the known first payment, the contract's
+    stated instalment, a recalculated PMT at a refix, or the last base payment
+    carried forward. It sets projected principal and interest in unobserved
+    months.
 
     The logic mimics how lenders adjust standing orders:
 
-    * First payment month uses the known value from the inputs file.
-    * At the beginning of a new rate block, and only when the strategy is
-      ``RecalculatePayment``, we recompute a PMT using the remaining term and
-      current balance.
+    * First payment month uses the known value from the inputs file (the first
+      contract's agreed instalment).
+    * Within a contract that states an instalment, that agreed instalment is
+      carried (a bank-confirmed figure that may differ from a naive PMT).
+    * At a refix (a new contract start month) with no stated instalment, and
+      only when the strategy is ``RecalculatePayment``, we recompute a PMT using
+      the remaining term and current balance.
     * Otherwise the last known *base* payment (excluding recurring extras) is
       carried forward.
+
+    Phase 10 / S2: a file with no contracts falls back to the original
+    month-number rate-block logic, so the still-legacy samples are unchanged.
     """
     if mnum == month_index(inputs.drawdown_date, inputs.first_payment_date):
         return inputs.known_first_payment
 
+    if inputs.contracts:
+        contract = _contract_for_month(inputs, mnum)
+        # A contract that states an instalment pins the payment for its months.
+        if contract is not None and contract.instalment is not None:
+            return contract.instalment
+        # No stated instalment: recompute the PMT at a refix (a new contract
+        # boundary) under RecalculatePayment, exactly as the legacy rate-block
+        # refix did; otherwise carry the last base payment forward.
+        if inputs.strategy_at_refix == "RecalculatePayment" and mnum in _contract_start_months(inputs):
+            remaining = max(0, inputs.total_term_months - (mnum - 1))
+            return pmt(annual_rate / 12.0, remaining, balance)
+        return last_known_payment_base
+
+    # Legacy fallback (files with no contracts): unchanged month-number logic.
     is_block_start = any((mnum == rb.start_month) for rb in inputs.rate_blocks)
     if inputs.strategy_at_refix == "RecalculatePayment" and is_block_start:
         remaining = max(0, inputs.total_term_months - (mnum - 1))
@@ -114,6 +177,10 @@ def _ladder_amount_for_month(inputs: Inputs, mnum: int) -> Optional[float]:
     step applies yet, which is the signal for the caller to fall back to the
     projected model payment. On its own this reads the agreed terms only and
     changes no modelled figure.
+
+    Phase 10 / S2: retained as the legacy fallback for files with no contracts;
+    a contracts file sources its agreed instalment from the contract in effect
+    instead (see the contractual-baseline block below).
 
     Technical note: ``inputs.contractual_ladder`` is sorted ascending by
     ``start_month`` in the schema loader, so the last step whose ``start_month``
@@ -173,11 +240,12 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
 
     Technical note: the daily mechanics are unchanged from Phase 5 / S5. Phase 7
     / S2 adds a read-only contractual-baseline capture on payment days (see the
-    CONTRACTUAL BASELINE block); it consults the agreed ladder and, as a
-    fallback, the existing ``payment_for_month`` projection, without mutating
-    any simulation state.
+    CONTRACTUAL BASELINE block). Phase 10 / S2 sources the rate lookup from
+    ``rate_lookup_for`` (contracts, with a rate_blocks fallback) and the
+    contractual baseline from the contract in effect (with the ladder fallback);
+    neither mutates any simulation state.
     """
-    rate_of = build_rate_lookup(inputs.rate_blocks)
+    rate_of = rate_lookup_for(inputs)
     months = month_tables(inputs, actuals)
 
     # ------------------------------------------------------------------
@@ -284,25 +352,32 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
         if base_sched is not None:
             last_known_payment_base = base_sched
 
-        # ---------------- CONTRACTUAL BASELINE (Phase 7 / S2) ----------------
+        # ---------------- CONTRACTUAL BASELINE (Phase 7 / S2; repointed P10/S2) ----------------
         # On a payment day, record the contractual instalment agreed for this
-        # month. The agreed ladder wins; where the bank has not confirmed a step
-        # the model's projected scheduled payment is used instead (clearly a
-        # projection, not an agreed figure). This is read-only: it does not
-        # change the balance, the debit applied, the carried-forward base, or the
+        # month. Phase 10 / S2: the contract in effect wins where it states an
+        # instalment (the agreed figure); otherwise fall back to the legacy
+        # ladder (only for no-contract files), then the scheduled PMT just
+        # computed, then a projected PMT. This is read-only: it does not change
+        # the balance, the debit applied, the carried-forward base, or the
         # interest posting, so no existing monthly figure moves.
         if is_payment_day:
-            agreed_amt = _ladder_amount_for_month(inputs, mnum)
-            if agreed_amt is not None:
-                contractual_today = agreed_amt           # bank-confirmed agreed instalment
-            elif base_sched is not None:
-                contractual_today = base_sched           # scheduled month: reuse the PMT just computed
+            contract = _contract_for_month(inputs, mnum)
+            if contract is not None and contract.instalment is not None:
+                contractual_today = contract.instalment    # agreed contract instalment
             else:
-                # Actual month with no agreed step: project the model PMT using
-                # the same pre-debit balance and rate the scheduled path uses.
-                contractual_today = payment_for_month(
-                    inputs, mnum, annual, balance, months, last_known_payment_base
-                )
+                # Legacy ladder only applies to files with no contracts.
+                agreed_amt = _ladder_amount_for_month(inputs, mnum) if not inputs.contracts else None
+                if agreed_amt is not None:
+                    contractual_today = agreed_amt          # bank-confirmed agreed instalment (legacy)
+                elif base_sched is not None:
+                    contractual_today = base_sched          # scheduled month: reuse the PMT just computed
+                else:
+                    # Actual month with no agreed figure: project the model PMT
+                    # using the same pre-debit balance and rate the scheduled
+                    # path uses.
+                    contractual_today = payment_for_month(
+                        inputs, mnum, annual, balance, months, last_known_payment_base
+                    )
             month_contractual[ym] = round(contractual_today, 2)
 
         # Logic to calculate potential interest posting amount
@@ -328,7 +403,7 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
 
         # ---------------- DEBITS ----------------
         # Apply debits in the order Payment → Extra → Lump to mirror the intent
-        # of the inputs and make the later "trim" logic deterministic.
+        # of the inputs and make the later \"trim\" logic deterministic.
         # STRICT ROUNDING: All debits must be 2 decimal places before hitting the balance.
         payment_today = round(payment_today, 2)
         extra_today = round(extra_today, 2)

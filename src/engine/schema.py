@@ -18,7 +18,7 @@ Dataclasses ``RateBlock``, ``ValuationBlock``, ``PropertyMeta``, ``OutputConfig`
 ``load_actuals`` (CSV) loaders.
 
 Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py``
-"Input schema" section. Behaviour is unchanged; only the module header,
+\"Input schema\" section. Behaviour is unchanged; only the module header,
 per-function finance notes, and the stderr status line were added. Date and
 month helpers now come from ``.helpers`` instead of being defined alongside.
 
@@ -47,7 +47,7 @@ Activating payment holidays is a separate, validated change with a golden
 re-baseline.
 
 Phase 8 / S3 note: ``OutputConfig`` gains a ``csv_subdir`` field (default
-"csv"). It names the sub-folder under each property's output directory that the
+\"csv\"). It names the sub-folder under each property's output directory that the
 engine writes every CSV into, leaving the headline ``<slug>_model.xlsx`` at the
 property root. Reading it here keeps the one parse point with the rest of the
 output knobs; the writer paths and the portfolio/baseline tools honour it. An
@@ -62,6 +62,17 @@ now a frozen dataclass with an explicit ``.copy()`` / ``.clone()`` and carries
 the new ``lender``, ``contracts``, ``loan_v2`` and ``profile`` fields. No engine
 code consumes the new fields yet (that begins in S2), so every current figure
 and the Gandon golden master stay byte-identical.
+
+Phase 10 / S2 note: ``load_inputs`` now sources the loan-level scalars from the
+new-schema keys when a ``contracts:`` array is present (``loan_v2`` resolved):
+``property_price`` from ``loan.property_value``, ``principal_at_drawdown`` from
+``loan.drawdown_amount``, ``known_first_payment`` from the first contract's
+``instalment``, and ``repayment_day_default`` from ``loan.repayment_day`` (via
+``_repayment_day_to_int``). Legacy files (no contracts) still read the old keys
+unchanged, so the still-legacy Property B/C samples and the Gandon golden stay
+byte-identical. The rate path and the recurring overpayment are consumed from
+the contracts by monthly.py / simulate.py; rate_blocks and overpay_rules stay
+empty for a converted file.
 """
 
 from __future__ import annotations
@@ -81,7 +92,7 @@ from .profile import LenderProfile, resolve_lender_profile
 
 
 # --- Property kind taxonomy -------------------------------------------------
-# A property "kind" is plain-English shorthand for what a property is and which
+# A property \"kind\" is plain-English shorthand for what a property is and which
 # parts of the model apply to it. It sets the default on/off state of the three
 # independent modules; any default can still be overridden per module in the
 # meta block. The three kinds modelled today:
@@ -98,7 +109,7 @@ KIND_DEFAULT_TOGGLES: Dict[str, Dict[str, bool]] = {
 }
 
 # Friendly spellings map to a single canonical kind so a config can say
-# "residence" or "BTL" and still resolve to the right module defaults.
+# \"residence\" or \"BTL\" and still resolve to the right module defaults.
 _KIND_ALIASES: Dict[str, str] = {
     "investment": "investment",
     "btl": "investment",
@@ -114,7 +125,7 @@ _KIND_ALIASES: Dict[str, str] = {
     "owned": "owned_outright",
 }
 
-# A file with no kind (or only the legacy "mode") behaves as before: an
+# A file with no kind (or only the legacy \"mode\") behaves as before: an
 # investment property with mortgage, tax, and valuation all on.
 DEFAULT_KIND = "investment"
 
@@ -128,8 +139,8 @@ _VALID_PAYMENT_HOLIDAY_MODES = {"interest_only", "full_deferral"}
 class RateBlock:
     """Continuous rate assumption for a span of model months.
 
-    Finance note: each block says "from month X to month Y the annual rate is
-    Z". Together the blocks are the loan's interest-rate path, which drives both
+    Finance note: each block says \"from month X to month Y the annual rate is
+    Z\". Together the blocks are the loan's interest-rate path, which drives both
     accrued interest and any payment recalculation at a refix.
     """
 
@@ -146,8 +157,8 @@ class ContractualStep:
     Finance note: the contractual ladder generalises the single
     ``known_first_payment`` into a list of agreed instalments, one per
     contractual step (drawdown, then each refix the bank has confirmed). Each
-    step says "from this model month the agreed monthly instalment is this euro
-    amount". Steps the bank has not confirmed yet are simply left out of the
+    step says \"from this model month the agreed monthly instalment is this euro
+    amount\". Steps the bank has not confirmed yet are simply left out of the
     ladder, and the engine keeps falling back to the recalculated model PMT,
     which is clearly a projection rather than an agreed figure. This is the
     agreed-terms source of truth that the Phase 7 payment attribution reconciles
@@ -159,12 +170,12 @@ class ContractualStep:
     source: str = "agreed"  # 'agreed' (bank-confirmed) | 'projection' (model PMT fallback)
 
 
-# --- Phase 10 / S1: date-based contract model (additive; parsed, not yet consumed) ---
+# --- Phase 10 / S1: date-based contract model (additive) ---
 # Section A of docs/contract_data_model.md replaces the month-number rate model
 # with a date-based contracts array: loan-level facts (one drawdown of new money)
-# separated from contract-level facts (a sequence of rate agreements). These
-# shapes are parsed alongside the legacy fields; no consumer reads them until
-# Phase 10 / S2, so every current figure and the Gandon golden stay unchanged.
+# separated from contract-level facts (a sequence of rate agreements). As of
+# Phase 10 / S2 the rate path and the recurring overpayment are consumed from
+# these shapes; the legacy fields remain as the fallback for un-migrated files.
 
 @dataclass
 class FollowOn:
@@ -237,8 +248,7 @@ class Loan:
 
     Finance note: money advanced is a loan fact; the rate agreements over time
     are the contracts. A property has exactly one loan and one or more
-    contracts. Parsed additively in Phase 10 / S1 and not yet consumed by the
-    engine.
+    contracts.
     """
 
     property_id: str
@@ -271,8 +281,8 @@ class ValuationBlock:
 class PropertyMeta:
     """Identity and module switches for one property.
 
-    Finance note: this answers "which property is this, and which parts of the
-    model run for it". The kind sets sensible defaults (a let property runs the
+    Finance note: this answers \"which property is this, and which parts of the
+    model run for it\". The kind sets sensible defaults (a let property runs the
     rental-tax module, your own home does not); the three toggles let you flip a
     single module without changing the kind.
     """
@@ -304,7 +314,7 @@ class OutputConfig:
     locale: str = "en_IE"               # locale tag; recorded (see note below)
     # Phase 8 / S3: sub-folder under each property's output directory that every
     # CSV is written into; the headline .xlsx stays at the property root. Default
-    # "csv" gives <slug>_model.xlsx + csv/. An empty string (or null) restores the
+    # \"csv\" gives <slug>_model.xlsx + csv/. An empty string (or null) restores the
     # flat layout with the CSVs beside the workbook.
     csv_subdir: str = "csv"
 
@@ -352,9 +362,9 @@ class Inputs:
     modelling_end_date: Optional[date]
     day_count: str = "ACT/365"
     # Phase 2: how to treat recurring extras when there *is* a bank payment line that month.
-    # "true"  -> assume extra included in the bank Payment (suppress separate Extra)
-    # "false" -> always post a separate Extra
-    # "auto"  -> behave like "true" (default)
+    # \"true\"  -> assume extra included in the bank Payment (suppress separate Extra)
+    # \"false\" -> always post a separate Extra
+    # \"auto\"  -> behave like \"true\" (default)
     merge_extra_mode: str = "auto"
     valuation_blocks: List[ValuationBlock] = field(default_factory=list)  # optional; overrides simple growth if provided
     reconcile_ok_abs_eur: float = 0.01
@@ -379,7 +389,7 @@ class Inputs:
     # --- NEW in Phase 10 / S1: append after the last existing field ---
     # The new date-based contract schema and the resolved lender profile,
     # parsed additively. Defaults keep legacy files (no `contracts:` key)
-    # byte-identical: no contracts, no loan_v2, no profile, nothing consumed yet.
+    # byte-identical: no contracts, no loan_v2, no profile.
     lender: Optional[str] = None
     contracts: List[Contract] = field(default_factory=list)
     loan_v2: Optional[Loan] = None
@@ -418,6 +428,26 @@ def _resolve_kind(raw_kind: Optional[str]) -> str:
             f"Use one of: {sorted(set(_KIND_ALIASES.values()))}."
         )
     return _KIND_ALIASES[key]
+
+
+def _repayment_day_to_int(value) -> int:
+    """Normalise a new-schema ``repayment_day`` to the integer clamp_day expects.
+
+    Finance note: the new Loan schema records the projected payment day either as
+    a day-of-month integer or as the word ``month_end``. The engine's month
+    scaffolding clamps a day-of-month into each month, so a month-end instruction
+    becomes 31 (clamp_day then pins it to the real last day). A missing value
+    falls back to the 1st, matching the legacy ``repayment_day_default`` default.
+    """
+    if value is None:
+        return 1
+    s = str(value).strip().lower()
+    if s in {"month_end", "eom", "end_of_month", "month-end"}:
+        return 31
+    try:
+        return int(float(s))
+    except (TypeError, ValueError):
+        return 1
 
 
 def _resolve_meta(raw: dict) -> PropertyMeta:
@@ -480,12 +510,12 @@ def _resolve_output(raw: dict) -> OutputConfig:
     currency = str(out_raw.get("currency") or "EUR").strip().upper()
     locale = str(out_raw.get("locale") or "en_IE").strip()
 
-    # Phase 8 / S3: the CSV sub-folder name. A missing key defaults to "csv"; an
+    # Phase 8 / S3: the CSV sub-folder name. A missing key defaults to \"csv\"; an
     # explicit empty string (or null) restores the flat layout with the CSVs
     # beside the workbook. Trimming any surrounding slashes keeps it a single
     # safe folder name regardless of how it is typed.
     raw_csv_subdir = out_raw.get("csv_subdir", "csv")
-    csv_subdir = ("" if raw_csv_subdir is None else str(raw_csv_subdir)).strip().strip("/\\")
+    csv_subdir = ("" if raw_csv_subdir is None else str(raw_csv_subdir)).strip().strip("/\\\\")
 
     return OutputConfig(
         write_excel=_flag("write_excel", True),
@@ -664,12 +694,12 @@ def _resolve_payment_events(entries) -> List[PaymentEvent]:
 
 
 def _resolve_contracts(loan: dict) -> List[Contract]:
-    """Parse the new-schema ``loan.contracts`` array (Section A). Additive.
+    """Parse the new-schema ``loan.contracts`` array (Section A).
 
     Finance note: reads the date-based contract objects that replace the
     month-number rate model. Returns an empty list when a file carries no
-    ``contracts:`` key, which is every legacy file today, so nothing changes for
-    the current samples. Contracts are sorted by start_date.
+    ``contracts:`` key, which is every un-migrated legacy file, so nothing
+    changes for those samples. Contracts are sorted by start_date.
     """
     out: List[Contract] = []
     for c in (loan.get("contracts") or []):
@@ -695,8 +725,8 @@ def _resolve_contracts(loan: dict) -> List[Contract]:
 def _resolve_loan_v2(loan: dict, contracts: List[Contract], meta: PropertyMeta) -> Optional[Loan]:
     """Build the new-schema :class:`Loan` when a ``contracts:`` array is present.
 
-    Finance note: additive parse of the loan-level facts (one drawdown of new
-    money). Returns None for legacy files (no ``contracts:`` key), so the current
+    Finance note: parse of the loan-level facts (one drawdown of new money).
+    Returns None for legacy files (no ``contracts:`` key), so the un-migrated
     samples and the Gandon golden are untouched. property_id falls back to the
     meta block, which is where the sample files carry it.
     """
@@ -816,10 +846,9 @@ def load_inputs(path: Path) -> Inputs:
         # A malformed value degrades to the safe default rather than crashing the run.
         payment_unattributed_ok_abs = 0.01
 
-    # Phase 10 / S1: additive parse of the new date-based contract schema and the
-    # lender profile. Consumed by no engine code yet (that begins in S2), so a
-    # legacy file (no `contracts:` key, no `lender`) leaves contracts empty,
-    # loan_v2 None, and profile None, and stays byte-identical.
+    # Phase 10 / S1: parse of the new date-based contract schema and the lender
+    # profile. A legacy file (no `contracts:` key, no `lender`) leaves contracts
+    # empty, loan_v2 None, and profile None.
     lender = (loan.get("lender") if loan else None)
     contracts = _resolve_contracts(loan)
     loan_v2 = _resolve_loan_v2(loan, contracts, meta)
@@ -829,18 +858,43 @@ def load_inputs(path: Path) -> Inputs:
         try:
             profile = resolve_lender_profile(str(lender), lenders_dir)
         except FileNotFoundError:
-            # A lender key without a discoverable profile is not fatal in S1:
-            # the profile stays None so the additive parse never breaks a run.
+            # A lender key without a discoverable profile is not fatal: the
+            # profile stays None so the parse never breaks a run.
             profile = None
 
+    # Phase 10 / S2: when the new-schema contracts array is present (loan_v2
+    # resolved), the loan-level scalar facts are sourced from the new keys and
+    # the known first payment is the first contract's agreed instalment. Legacy
+    # files (no contracts) keep sourcing the old keys unchanged, so those runs
+    # and the still-legacy Property B/C samples stay byte-identical.
+    if loan_v2 is not None:
+        property_price_val = float(loan.get("property_value", loan.get("property_price", 0.0)))
+        principal_val = float(loan.get("drawdown_amount", loan.get("principal_at_drawdown", 0.0)))
+        first_contract_instalment = (
+            contracts[0].instalment if (contracts and contracts[0].instalment is not None) else None
+        )
+        known_first_val = (
+            float(first_contract_instalment)
+            if first_contract_instalment is not None
+            else float(loan.get("known_first_payment", 0.0))
+        )
+        repayment_day_val = _repayment_day_to_int(
+            loan.get("repayment_day", loan.get("repayment_day_default", 1))
+        )
+    else:
+        property_price_val = float(loan.get("property_price", 0.0))
+        principal_val = float(loan.get("principal_at_drawdown", 0.0))
+        known_first_val = float(loan.get("known_first_payment", 0.0))
+        repayment_day_val = int(loan.get("repayment_day_default", 1))
+
     return Inputs(
-        property_price=float(loan.get("property_price", 0.0)),
-        principal_at_drawdown=float(loan.get("principal_at_drawdown", 0.0)),
+        property_price=property_price_val,
+        principal_at_drawdown=principal_val,
         drawdown_date=drawdown,
         total_term_months=int(loan.get("total_term_months", 0)),
         first_payment_date=first_pay,
-        known_first_payment=float(loan.get("known_first_payment", 0.0)),
-        repayment_day_default=int(loan.get("repayment_day_default", 1)),
+        known_first_payment=known_first_val,
+        repayment_day_default=repayment_day_val,
         property_growth_pa=float(loan.get("property_growth_pa", 0.0)),
         overpayment_cap_pct=float(loan.get("overpayment_cap_pct", 0.10)),
         rate_blocks=blocks,

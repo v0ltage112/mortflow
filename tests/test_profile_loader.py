@@ -6,6 +6,10 @@ sample profile parses, rules resolve by anchor date (latest effective_from <=
 anchor), the sample-vs-local fallback behaves, and the legacy inputs still parse
 with no contracts and no profile so the refactor stays byte-identical. See
 docs/lender_profile.md.
+
+Phase 10 / S2 note: test_legacy_inputs_parse_additively_no_contracts now uses
+Property B (still legacy) because Property A was converted to the contracts
+schema in S2. Property B is the canonical legacy reference until S5/S6.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LENDERS_DIR = REPO_ROOT / "data_sample" / "lenders"
 SAMPLE_PROFILE = LENDERS_DIR / "sample_lender.yaml"
 PROPERTY_A = REPO_ROOT / "data_sample" / "property_a" / "inputs.sample.yaml"
+PROPERTY_B = REPO_ROOT / "data_sample" / "property_b" / "inputs.sample.yaml"
 
 
 def test_sample_profile_loads_and_parses():
@@ -130,13 +135,14 @@ def test_profile_with_no_versions_rejected():
 
 
 def test_legacy_inputs_parse_additively_no_contracts():
-    """The legacy Property A sample parses with no contracts and no profile.
+    """A legacy sample (Property B) parses with no contracts and no profile.
 
     This is the byte-identical guarantee for S1: a file with no ``contracts:``
     key and no ``lender`` leaves the new fields empty, so nothing the engine
-    reads changes.
+    reads changes. Property B is used here because Property A was converted to
+    the contracts schema in P10/S2; B remains legacy until S5/S6.
     """
-    inputs = load_inputs(PROPERTY_A)
+    inputs = load_inputs(PROPERTY_B)
     assert inputs.contracts == []
     assert inputs.lender is None
     assert inputs.loan_v2 is None
