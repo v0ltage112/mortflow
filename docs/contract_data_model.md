@@ -291,3 +291,139 @@ This is the refactor half.
 - Deferred to S6: the anonymisation mapping (real to sample), the committed
   sample profile values, the private boi.local.yaml real values, the Somerton
   inputs.yaml rewrite, and the confirmed Phase 10 session breakdown.
+
+
+---
+
+# Section C (P9/S6): Anonymisation mapping and Phase 10 session plan
+
+> Authored in P9/S6. Fulfils the anonymisation-mapping and Phase-10-plan items
+> deferred in A10 and B5. This section is committed to the public repo, so it
+> carries anonymisation policy and rules only, never a real figure, never a real
+> date or name, and never a reversible transform. The real-to-sample value
+> correspondence, where any is recorded, lives only on the private Real Property
+> Data page, off-repo.
+
+## C0. Scope
+
+S6 produces two tracks of data plus this mapping: the committed anonymised
+sample files (public) and the private real-data blocks (off-repo). The engine
+does not consume any of it until Phase 10 wires the new schema; see C7.
+
+## C1. Two-track data model
+
+- Committed sample track (public repo): data_sample/<property>/inputs.yaml,
+  data_sample/lenders/sample_lender.yaml, data_sample/portfolio.yaml.
+  Fictitious values, safe to publish, internally consistent so the golden
+  master can lock them.
+- Private real track (off-repo): the real inputs.yaml per property and the real
+  boi lender profile (with R%/R1%), mirrored on the private Real Property Data
+  page and pasted into git-ignored local files. Never committed.
+
+The sample and real files share one thing only: the schema shape. Everything
+else differs.
+
+## C2. What is scrubbed vs what stays
+
+Scrubbed (never in a committed file):
+
+- Money amounts: drawdown, principal, instalment, property value, overpayment
+  amounts, breakage figures.
+- Absolute dates: drawdown date, first payment, refix / fixed-period-end dates,
+  maturity.
+- Identifiers: account numbers, addresses, property names / codenames, lender
+  customer references.
+- Real market rates: the R%/R1% money-market series (private boi profile only).
+- Tenancy / tenant personal data.
+
+Kept (safe, structural, or published product rules):
+
+- Field names and schema shape.
+- Rate types (fixed / variable / tracker) and the count and ordering of
+  contracts.
+- Conventions: ACT/365 day-count, Modified Following, and the cap basis
+  (percent_of_monthly_repayment + EUR 65 floor). These are published product
+  rules, not personal data.
+- The presence and shape of features: a payment break, a standing overpayment
+  window, a refix boundary, a follow_on.
+- Relative timing: term length, the gap between drawdown and first payment,
+  fixed-period length, and the position of a refix within the loan.
+
+## C3. Anonymisation rules
+
+1. Replace, do not scale. Committed sample amounts are freshly invented round
+   numbers of a similar order of magnitude, not the real figures multiplied by a
+   factor or shifted by an offset. A linear scale or offset is reversible if any
+   single real value ever leaks; clean replacement is not.
+2. Preserve structure and relative timing, not absolute values. Keep the same
+   number of contracts, the same feature shape (break / overpay / refix), and
+   the same durations (term, drawdown-to-first-payment gap, fixed-period
+   length). Set sample dates to clean fictitious anchors that reproduce those
+   durations.
+3. No published transform. This section never states the exact real-to-sample
+   correspondence. If a correspondence is recorded at all, it lives only on the
+   private page.
+4. Internally consistent. Each sample loan must load, run, and reconcile on its
+   own, so the golden master can lock it. A sample is a valid fictitious loan,
+   not a redacted real one.
+5. Product rules are not secrets. The 10% / EUR 65 cap, ACT/365, Modified
+   Following, the 0.3% green discount, and similar published thresholds may
+   appear in committed samples and docs.
+
+## C4. Sample file set (committed, authored in S6)
+
+- data_sample/lenders/sample_lender.yaml: the generic profile from
+  docs/lender_profile.md LP9 (placeholder cap / breakage, empty money-market
+  series).
+- data_sample/property_a/inputs.yaml: investment, one contract, a payment break,
+  a standing overpayment; the Property A shape with invented figures.
+- data_sample/property_b/inputs.yaml: primary, two contracts across a refix; the
+  Property B shape with invented figures.
+- data_sample/property_c/inputs.yaml: owned_outright, valuation only, no loan or
+  contracts.
+- data_sample/portfolio.yaml: the roster (Property A enabled, B and C disabled),
+  unchanged in intent from today so the golden master stays green.
+
+These are Phase 10 inputs: authored now, swapped into the engine path in Phase
+10 (C7).
+
+## C5. Private real-data blocks (off-repo)
+
+Authored as copy-paste blocks under the private Real Property Data page and its
+three property subpages, in the new shape:
+
+- Property A: real loan + one contract (payment break, a formalised part-capital
+  increase), real dates and amounts.
+- Property B: real loan + two contracts (origin + refix) with a standing-overpay
+  window on the first.
+- Property C: valuation-only, no loan.
+- Real boi profile: real cap / breakage plus the private R%/R1% money-market
+  series and a plain-English sourcing note.
+
+Staging rule: paste these into a private, non-live file (for example
+inputs.v2.yaml) or keep them on the private page. Do not overwrite the live
+old-shape inputs.yaml until the Phase 10 cutover, or today's runs break (C7).
+
+## C6. Proposed Phase 10 session breakdown (confirm before scoping)
+
+Derived from the B2 cascade map and the B3 migration order. Proposed, to confirm
+with Ali at Phase 10 S0:
+
+- P10/S0 setup: scope, rollback tag v1.9.0, branch phase10/contract-schema.
+- P10/S1: profile loader + contracts schema in schema.py, additive parse, no
+  consumer switched yet. Green.
+- P10/S2: repoint the rate lookup (monthly.py, report.py) and the instalment
+  logic (simulate.py) to contracts; convert the sample inputs.yaml; keep
+  day_clamp. Byte-identical golden.
+- P10/S3: retire the scalar overpayment_cap_pct; move cap + breakage into the
+  profile as data; update tools/baseline.py sanitiser. Byte-identical.
+- P10/S4: switch the payment-date convention to Modified Following + the Irish
+  business-day calendar; re-baseline the golden (the one deliberate move).
+- P10/S5: consume the real property rewrites, update docs + README, ship v2.0.0.
+
+## C7. Cutover note (why the new data is inert until Phase 10)
+
+Today's engine reads the old schema. The new-shape sample and real files authored
+in S6 cannot be run until Phase 10 rewires the loader and the consumers. So:
+author now, cut over in Phase 10. Never replace a live old-shape inputs.yaml with
+a new-shape file before the Phase 10 engine change lands.
