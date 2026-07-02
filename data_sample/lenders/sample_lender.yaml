@@ -1,0 +1,24 @@
+# data_sample/lenders/sample_lender.yaml
+# Committed generic lender profile. Illustrative placeholder values only.
+# The real BOI profile (boi.local.yaml) is git-ignored and never committed.
+lender_id: sample_lender
+display_name: "Sample Lender"
+
+# Append-only, effective-dated rules. For each rule, resolve the latest
+# effective_from <= the anchor date (see docs/lender_profile.md LP7 for anchors).
+rule_versions:
+  - effective_from: 2020-01-01
+    rationale: "Generic fixed-rate rules for the public sample."
+    overpayment_cap:
+      basis: percent_of_monthly_repayment
+      percent: 0.10
+      floor_eur: 65.00
+      rolls_over: false          # unused monthly headroom does not accumulate
+    breakage:
+      formula: principal_x_rate_differential_x_remaining_years
+    payment_date_convention: modified_following
+    day_count: ACT/365
+
+# R%/R1% breakage rates are private and live only in boi.local.yaml.
+# The sample publishes an empty series; breakage is "not computable" without them.
+money_market_rates: []

@@ -53,12 +53,21 @@ property root. Reading it here keeps the one parse point with the rest of the
 output knobs; the writer paths and the portfolio/baseline tools honour it. An
 empty string restores the previous flat layout. No modelled number changes; only
 the CSV paths move.
+
+Phase 10 / S1 note: additive introduction of the date-based contract schema
+(Section A of docs/contract_data_model.md) and the lender profile. New
+dataclasses ``FollowOn``, ``StandingOverpayment``, ``PaymentEvent``,
+``Contract`` and ``Loan`` are parsed alongside the legacy fields; ``Inputs`` is
+now a frozen dataclass with an explicit ``.copy()`` / ``.clone()`` and carries
+the new ``lender``, ``contracts``, ``loan_v2`` and ``profile`` fields. No engine
+code consumes the new fields yet (that begins in S2), so every current figure
+and the Gandon golden master stay byte-identical.
 """
 
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -68,6 +77,7 @@ import pandas as pd
 import yaml
 
 from .helpers import ensure_date, ym_int, growth_to_decimal, month_index
+from .profile import LenderProfile, resolve_lender_profile
 
 
 # --- Property kind taxonomy -------------------------------------------------
@@ -149,6 +159,100 @@ class ContractualStep:
     source: str = "agreed"  # 'agreed' (bank-confirmed) | 'projection' (model PMT fallback)
 
 
+# --- Phase 10 / S1: date-based contract model (additive; parsed, not yet consumed) ---
+# Section A of docs/contract_data_model.md replaces the month-number rate model
+# with a date-based contracts array: loan-level facts (one drawdown of new money)
+# separated from contract-level facts (a sequence of rate agreements). These
+# shapes are parsed alongside the legacy fields; no consumer reads them until
+# Phase 10 / S2, so every current figure and the Gandon golden stay unchanged.
+
+@dataclass
+class FollowOn:
+    """A directional roll-to rate for after a contract's fixed period (A2).
+
+    Finance note: non-binding. Projections past a contract's end_date use it
+    only as a clearly flagged provisional assumption; adding a refix contract
+    supersedes it.
+    """
+
+    rate: Optional[float] = None
+    rate_type: str = "variable"
+    basis: str = ""
+    indicative: bool = True
+    note: str = ""
+
+
+@dataclass
+class StandingOverpayment:
+    """A recurring voluntary overpayment window attached to a contract (A3)."""
+
+    amount: float
+    start_date: date
+    end_date: Optional[date] = None
+    note: str = ""
+
+
+@dataclass
+class PaymentEvent:
+    """A date-based, contract-scoped payment event (A4).
+
+    Finance note: covers a payment break (interest-only plus capitalise) and a
+    formalised part-capital instalment increase (contractual, not an
+    overpayment).
+    """
+
+    type: str                       # payment_holiday | part_capital_increase | ...
+    start_date: date
+    end_date: Optional[date] = None
+    treatment: str = ""             # interest_only | capitalise | instalment_increase
+    amount: Optional[float] = None
+    note: str = ""
+
+
+@dataclass
+class Contract:
+    """One rate agreement over a loan's life (Section A Contract object).
+
+    Finance note: a fixed period plus a directional follow-on. A refix advances
+    no new money, so it is a new Contract on the same loan. instalment is the
+    contractual monthly repayment; None means the engine derives it via PMT.
+    """
+
+    id: str
+    start_date: date
+    end_date: Optional[date] = None
+    rate: float = 0.0
+    rate_type: str = "fixed"
+    instalment: Optional[float] = None
+    follow_on: Optional[FollowOn] = None
+    standing_overpayment: Optional[StandingOverpayment] = None
+    payment_events: List[PaymentEvent] = field(default_factory=list)
+    overpayment_cap_override: Optional[dict] = None
+    breakage_override: Optional[dict] = None
+
+
+@dataclass
+class Loan:
+    """Loan-level facts for the new schema: one drawdown of new money (Section A).
+
+    Finance note: money advanced is a loan fact; the rate agreements over time
+    are the contracts. A property has exactly one loan and one or more
+    contracts. Parsed additively in Phase 10 / S1 and not yet consumed by the
+    engine.
+    """
+
+    property_id: str
+    lender: str
+    drawdown_amount: float
+    drawdown_date: date
+    total_term_months: int
+    property_value: float
+    contracts: List[Contract] = field(default_factory=list)
+    maturity_date: Optional[date] = None
+    repayment_day: Optional[str] = None   # int-as-value or 'month_end'; projected dates only
+    property_growth_pa: float = 0.0
+
+
 @dataclass
 class ValuationBlock:
     """A user-specified revaluation of the property.
@@ -222,7 +326,7 @@ class PaymentHoliday:
     capitalise: bool     # whether unpaid interest is added to the balance
 
 
-@dataclass
+@dataclass(frozen=True)
 class Inputs:
     """Canonical representation of the YAML modelling configuration.
 
@@ -271,6 +375,29 @@ class Inputs:
     # and the tolerance is unused until S3 emits the column.
     contractual_ladder: List[ContractualStep] = field(default_factory=list)
     payment_unattributed_ok_abs_eur: float = 0.01
+
+    # --- NEW in Phase 10 / S1: append after the last existing field ---
+    # The new date-based contract schema and the resolved lender profile,
+    # parsed additively. Defaults keep legacy files (no `contracts:` key)
+    # byte-identical: no contracts, no loan_v2, no profile, nothing consumed yet.
+    lender: Optional[str] = None
+    contracts: List[Contract] = field(default_factory=list)
+    loan_v2: Optional[Loan] = None
+    profile: Optional[LenderProfile] = None
+
+    def copy(self, **changes) -> "Inputs":
+        """Return a new Inputs with the given fields replaced (frozen-safe clone).
+
+        Finance note: Inputs is immutable (a frozen dataclass), so scenario work
+        never mutates the baseline in place. ``inputs.copy(overpayment_cap_pct=...)``
+        returns an independent Inputs with just those fields changed; the
+        original is untouched. ``.clone()`` is an alias. Design decision #5 and
+        the foundation for the Phase 14 clone-and-perturb scenarios.
+        """
+        return replace(self, **changes)
+
+    # Alias so either name reads naturally at the call site.
+    clone = copy
 
 
 def _resolve_kind(raw_kind: Optional[str]) -> str:
@@ -489,10 +616,104 @@ def _resolve_contractual_ladder(raw: dict, drawdown_date: Optional[date]) -> Lis
         # future fallback row. Default to agreed since the ladder holds confirmed terms.
         source = str(e.get("source", "agreed")).strip().lower()
         steps.append(ContractualStep(start_month=start_month, amount=amount, source=source))
-
     # Sort by effective month so every consumer reads the ladder in time order.
     steps.sort(key=lambda s: s.start_month)
     return steps
+
+
+def _resolve_follow_on(raw: Optional[dict]) -> Optional[FollowOn]:
+    """Parse a contract ``follow_on`` block; None when absent."""
+    if not raw:
+        return None
+    return FollowOn(
+        rate=(None if raw.get("rate") is None else float(raw["rate"])),
+        rate_type=str(raw.get("rate_type", "variable")),
+        basis=str(raw.get("basis", "") or ""),
+        indicative=bool(raw.get("indicative", True)),
+        note=str(raw.get("note", "") or ""),
+    )
+
+
+def _resolve_standing_overpayment(raw: Optional[dict]) -> Optional[StandingOverpayment]:
+    """Parse a contract ``standing_overpayment`` block; None when absent."""
+    if not raw:
+        return None
+    return StandingOverpayment(
+        amount=float(raw["amount"]),
+        start_date=ensure_date(raw["start_date"]),
+        end_date=(ensure_date(raw["end_date"]) if raw.get("end_date") else None),
+        note=str(raw.get("note", "") or ""),
+    )
+
+
+def _resolve_payment_events(entries) -> List[PaymentEvent]:
+    """Parse a contract ``payment_events`` list; empty when absent."""
+    out: List[PaymentEvent] = []
+    for e in (entries or []):
+        out.append(
+            PaymentEvent(
+                type=str(e.get("type", "")),
+                start_date=ensure_date(e["start_date"]),
+                end_date=(ensure_date(e["end_date"]) if e.get("end_date") else None),
+                treatment=str(e.get("treatment", "") or ""),
+                amount=(None if e.get("amount") is None else float(e["amount"])),
+                note=str(e.get("note", "") or ""),
+            )
+        )
+    return out
+
+
+def _resolve_contracts(loan: dict) -> List[Contract]:
+    """Parse the new-schema ``loan.contracts`` array (Section A). Additive.
+
+    Finance note: reads the date-based contract objects that replace the
+    month-number rate model. Returns an empty list when a file carries no
+    ``contracts:`` key, which is every legacy file today, so nothing changes for
+    the current samples. Contracts are sorted by start_date.
+    """
+    out: List[Contract] = []
+    for c in (loan.get("contracts") or []):
+        out.append(
+            Contract(
+                id=str(c["id"]),
+                start_date=ensure_date(c["start_date"]),
+                end_date=(ensure_date(c["end_date"]) if c.get("end_date") else None),
+                rate=float(c.get("rate", 0.0)),
+                rate_type=str(c.get("rate_type", "fixed")),
+                instalment=(None if c.get("instalment") is None else float(c["instalment"])),
+                follow_on=_resolve_follow_on(c.get("follow_on")),
+                standing_overpayment=_resolve_standing_overpayment(c.get("standing_overpayment")),
+                payment_events=_resolve_payment_events(c.get("payment_events")),
+                overpayment_cap_override=c.get("overpayment_cap_override"),
+                breakage_override=c.get("breakage_override"),
+            )
+        )
+    out.sort(key=lambda k: k.start_date)
+    return out
+
+
+def _resolve_loan_v2(loan: dict, contracts: List[Contract], meta: PropertyMeta) -> Optional[Loan]:
+    """Build the new-schema :class:`Loan` when a ``contracts:`` array is present.
+
+    Finance note: additive parse of the loan-level facts (one drawdown of new
+    money). Returns None for legacy files (no ``contracts:`` key), so the current
+    samples and the Gandon golden are untouched. property_id falls back to the
+    meta block, which is where the sample files carry it.
+    """
+    if not loan.get("contracts"):
+        return None
+    return Loan(
+        property_id=str(loan.get("property_id", getattr(meta, "property_id", "")) or ""),
+        lender=str(loan.get("lender", "") or ""),
+        drawdown_amount=float(loan.get("drawdown_amount", 0.0)),
+        drawdown_date=ensure_date(loan["drawdown_date"]),
+        total_term_months=int(loan.get("total_term_months", 0)),
+        property_value=float(loan.get("property_value", 0.0)),
+        contracts=contracts,
+        maturity_date=(ensure_date(loan["maturity_date"]) if loan.get("maturity_date") else None),
+        repayment_day=loan.get("repayment_day"),
+        property_growth_pa=float(loan.get("property_growth_pa", 0.0)),
+    )
 
 
 def load_inputs(path: Path) -> Inputs:
@@ -554,7 +775,6 @@ def load_inputs(path: Path) -> Inputs:
     # Optional property valuation blocks (re/valuations + growth regime changes)
     vblocks_raw = (loan.get("valuation_blocks") or [])
     vblocks: List[ValuationBlock] = []
-
     for vb in vblocks_raw:
         vblocks.append(
             ValuationBlock(
@@ -596,6 +816,23 @@ def load_inputs(path: Path) -> Inputs:
         # A malformed value degrades to the safe default rather than crashing the run.
         payment_unattributed_ok_abs = 0.01
 
+    # Phase 10 / S1: additive parse of the new date-based contract schema and the
+    # lender profile. Consumed by no engine code yet (that begins in S2), so a
+    # legacy file (no `contracts:` key, no `lender`) leaves contracts empty,
+    # loan_v2 None, and profile None, and stays byte-identical.
+    lender = (loan.get("lender") if loan else None)
+    contracts = _resolve_contracts(loan)
+    loan_v2 = _resolve_loan_v2(loan, contracts, meta)
+    profile: Optional[LenderProfile] = None
+    if lender:
+        lenders_dir = Path(path).resolve().parent.parent / "lenders"
+        try:
+            profile = resolve_lender_profile(str(lender), lenders_dir)
+        except FileNotFoundError:
+            # A lender key without a discoverable profile is not fatal in S1:
+            # the profile stays None so the additive parse never breaks a run.
+            profile = None
+
     return Inputs(
         property_price=float(loan.get("property_price", 0.0)),
         principal_at_drawdown=float(loan.get("principal_at_drawdown", 0.0)),
@@ -621,6 +858,10 @@ def load_inputs(path: Path) -> Inputs:
         payment_holidays=payment_holidays,
         contractual_ladder=contractual_ladder,
         payment_unattributed_ok_abs_eur=payment_unattributed_ok_abs,
+        lender=lender,
+        contracts=contracts,
+        loan_v2=loan_v2,
+        profile=profile,
     )
 
 

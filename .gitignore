@@ -45,3 +45,10 @@ out_sample/
 # --- Environment / secrets ---
 .env
 *.env
+
+# --- mortflow: private lender profiles (never commit real rules/rates) ---
+# The committed sample lives at data_sample/lenders/sample_lender.yaml (tracked).
+# Real per-lender rules + money-market rates live in *.local.yaml under data/
+# (already ignored above); this line makes that intent explicit and also covers
+# any lenders folder placed outside data/.
+data/lenders/*.local.yaml
