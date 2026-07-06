@@ -12,6 +12,8 @@
 > values. The generic product thresholds (10%, EUR 65, 0.5%, EUR 2.54, 0.3%,
 > 102%) are published BOI product rules, not personal data. Real money-market
 > rates stay off-repo in the private profile.
+>
+> Status (Phase 10, v2.0.0, shipped 2026-07-06): implemented. This profile is live in src/engine/profile.py (the loader plus effective-dated rule resolution) and src/engine/schema.py (resolve_overpayment_cap_allowance, overpayment_cap_for_contract, and resolve_breakage_reference). data/lenders/sample_lender.yaml ships committed; the real boi.local.yaml stays git-ignored. The overpayment cap, the breakage reference, the day-count, and the Modified Following payment-date convention resolve per the LP7 anchors as of v2.0.0. The cap and breakage resolvers are reference-only (no output figure consumes them yet); the payment-date convention is the one rule that changed engine output, driving the v2.0.0 golden re-baseline. This document remains the design brief; the live repo is the source of truth.
 
 ## LP0. Purpose and scope
 

@@ -211,7 +211,7 @@ The pytest suite covers reconciliation tolerances, interest accrual, valuation b
 pytest -q
 ```
 
-Expected: **90 passed, 2 skipped, 0 failed**.
+Expected: **127 passed, 2 skipped, 0 failed**.
 
 Run the tests after dependency updates or when you change the engine/tax logic to ensure both the financial maths and tax outputs stay within contract tolerances.
 
@@ -246,6 +246,7 @@ Remove those months from the tenancy file or configure `deductible_window` range
 | v1.7.0 | 2026-06-19 | Multi-property scaffolding & toggles: a property kind drives independent mortgage / tax / valuation modules, including a no-mortgage valuation-only path; ignored YAML knobs (output.*) now honoured and payment_holidays parse-and-defer; three-property sample data (Gandon investment, Somerton primary, Paragon owned-outright) with portfolio enable / kind toggles. Gandon golden master unchanged. |
 | v1.8.0 | 2026-06-29 | Overpayment attribution. Each monthly payment now splits into contractual, overpayment, lump, and an explicit Difference residual, driven by agreed terms rather than the merge flag. Conserved quantities (total paid, interest, principal, balance, payoff) byte-identical to v1.7.0; only the attribution columns are new, renamed, or reordered. Legacy payment_amount and extra_amount columns retired; portfolio KPIs report total_contractual / total_overpayment / total_difference and the next-payment figure reports the contractual instalment. Golden master re-baselined to the new column set. |
 | v1.9.0 | 2026-06-30 | Output deliverables. Each property now gets its own `<slug>_model.xlsx` workbook (Summary sheet first, plus a Valuation sheet and the Phase 7 attribution-split totals), every CSV is demoted into a `csv/` subfolder behind an `output.csv_subdir` knob, and the top-level `portfolio_summary.xlsx` rollup is rebuilt to surface the attribution columns, the Section 97 tax-deductible interest, and an explicit `as_of_date` snapshot date. Engine maths byte-identical to v1.8.0: only the output file shape moved, no figure changed. Golden master re-baselined to the new file set and paths. |
+| v2.0.0 | 2026-07-06 | Contract schema redesign + Inputs formalisation. The month-number rate model (rate_blocks, contractual_ladder, overpay_rules, the scalar overpayment_cap_pct, strategy_at_refix, and bank.payment_holidays) is replaced by a date-based contracts array that separates loan-level facts (one drawdown of new money) from contract-level facts (a sequence of rate agreements), resolved against an effective-dated per-lender profile (committed data/lenders/sample_lender.yaml, git-ignored boi.local.yaml) for the overpayment cap, the breakage reference, the day-count, and the payment-date convention. Inputs becomes a frozen dataclass with .copy() / .clone() for safe scenario cloning. The projected payment-date convention moves from a day-of-month clamp to Modified Following on an Irish business-day calendar, the one deliberate behaviour change, so projected future payment dates shift and the golden master was re-baselined; every conserved quantity through the refactor stayed byte-identical. Overpayment cap is max(10% of the monthly instalment, EUR 65 floor). Tests: 127 passed, 2 skipped. Rollback v1.9.0. |
 
 
 ---
