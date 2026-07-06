@@ -83,6 +83,7 @@ from .helpers import (
     ym_int,
 )
 from .schema import Inputs, RateBlock
+from .calendar_ie import adjust_for_convention, CONVENTION_DAY_CLAMP
 
 
 # =====================================================================
@@ -178,6 +179,26 @@ def month_span(start: date, end: date) -> List[date]:
     return out
 
 
+def _payment_convention_on(inputs: Inputs, anchor: date) -> str:
+    """Return the payment-date convention in force on ``anchor``.
+
+    Finance note: the convention is a lender-profile rule (LP3/LP7): resolve
+    the rule version in force on the scheduled date and read its
+    payment_date_convention. A file with no resolved profile (legacy Property
+    B/C, or any file without a lender key) falls back to 'day_clamp', the
+    engine's historical behaviour, so only a profile that states
+    modified_following moves any date.
+    """
+    profile = getattr(inputs, "profile", None)
+    if profile is None:
+        return CONVENTION_DAY_CLAMP
+    try:
+        return profile.rule_on(anchor).payment_date_convention
+    except ValueError:
+        # No rule version on or before the anchor: keep the safe default.
+        return CONVENTION_DAY_CLAMP
+
+
 def month_tables(inputs: Inputs, actuals: pd.DataFrame) -> pd.DataFrame:
     """Build a per-month summary table consumed by the daily engine.
 
@@ -252,7 +273,12 @@ def month_tables(inputs: Inputs, actuals: pd.DataFrame) -> pd.DataFrame:
         # Default payment date only if no actual payment that month
         def_pay = None
         if ms >= date(inputs.first_payment_date.year, inputs.first_payment_date.month, 1):
-            def_pay = clamp_day(ms.year, ms.month, inputs.repayment_day_default)
+            # Phase 10 / S4: clamp to the repayment day, then apply the lender
+            # profile's payment-date convention (modified_following) so
+            # projected debits land on Irish working days. day_clamp (or no
+            # profile) preserves the prior behaviour.
+            clamped = clamp_day(ms.year, ms.month, inputs.repayment_day_default)
+            def_pay = adjust_for_convention(clamped, _payment_convention_on(inputs, clamped))
 
         rows.append(
             dict(
