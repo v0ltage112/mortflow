@@ -67,41 +67,57 @@ def _first_set(*candidates: str | None) -> str | None:
     return None
 
 
+def _resolve_path(cli: str | None, env_value: str | None, local_value: str | None, default: Path) -> Path:
+    """Resolve a path while tolerating stale environment overrides.
+
+    Explicit CLI values always win. Environment settings are only used when they
+    point to an existing location; otherwise the loader falls back to the
+    machine-local YAML override and, finally, the built-in default. This keeps a
+    stale one-off env var from blocking a valid local config.
+    """
+    if cli is not None and str(cli).strip() != "":
+        return Path(cli).expanduser().resolve()
+
+    for candidate in (env_value, local_value):
+        if candidate is None or str(candidate).strip() == "":
+            continue
+        path = Path(candidate).expanduser()
+        if path.exists():
+            return path.resolve()
+
+    return default.resolve()
+
+
 def resolve_data_dir(cli: str | None = None) -> Path:
     """Resolve the input-data directory as an absolute path.
 
-    Precedence: cli > MORTGAGE_DATA_DIR > paths.local.yaml 'data_dir' >
-    <repo_root>/data_sample.
+    Precedence: cli > existing MORTGAGE_DATA_DIR > existing paths.local.yaml
+    'data_dir' > <repo_root>/data_sample. A stale env override that points to a
+    missing location is ignored so a valid local YAML path still works.
     """
     local = _load_local_paths()
-    chosen = _first_set(
-        cli,                            # 1. explicit caller / CLI flag
-        os.environ.get(_DATA_DIR_ENV),  # 2. environment variable
-        local.get("data_dir"),          # 3. paths.local.yaml
+    return _resolve_path(
+        cli,
+        os.environ.get(_DATA_DIR_ENV),
+        local.get("data_dir"),
+        _repo_root() / "data_sample",
     )
-    if chosen is None:
-        # 4. in-repo default: data_sample/ so a fresh clone works out-of-the-box.
-        return _repo_root() / "data_sample"
-    # expanduser handles a leading ~; resolve makes the path absolute.
-    return Path(chosen).expanduser().resolve()
 
 
 def resolve_out_dir(cli: str | None = None) -> Path:
     """Resolve the output directory as an absolute path.
 
-    Precedence: cli > MORTGAGE_OUT_DIR > paths.local.yaml 'out_dir' >
-    <repo_root>/out.
+    Precedence: cli > existing MORTGAGE_OUT_DIR > existing paths.local.yaml
+    'out_dir' > <repo_root>/out. A stale env override that points to a missing
+    location is ignored so a valid local YAML path still works.
     """
     local = _load_local_paths()
-    chosen = _first_set(
-        cli,                           # 1. explicit caller / CLI flag
-        os.environ.get(_OUT_DIR_ENV),  # 2. environment variable
-        local.get("out_dir"),          # 3. paths.local.yaml
+    return _resolve_path(
+        cli,
+        os.environ.get(_OUT_DIR_ENV),
+        local.get("out_dir"),
+        _repo_root() / "out",
     )
-    if chosen is None:
-        # 4. in-repo default.
-        return _repo_root() / "out"
-    return Path(chosen).expanduser().resolve()
 
 
 def resolve_relative(base_file: str | Path, path: str | Path) -> Path:

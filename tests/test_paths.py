@@ -46,6 +46,21 @@ def test_env_used_when_no_cli_out_dir(tmp_path, monkeypatch):
     assert resolve_out_dir().resolve() == tmp_path.resolve()
 
 
+def test_missing_env_override_falls_back_to_local_paths(monkeypatch, tmp_path):
+    """A stale env override should not block a valid local-path override."""
+    local_data = tmp_path / "local-data"
+    local_out = tmp_path / "local-out"
+    local_data.mkdir()
+    local_out.mkdir()
+
+    monkeypatch.setenv("MORTGAGE_DATA_DIR", str(tmp_path / "missing"))
+    monkeypatch.setenv("MORTGAGE_OUT_DIR", str(tmp_path / "missing-out"))
+    monkeypatch.setattr("src.paths._load_local_paths", lambda: {"data_dir": str(local_data), "out_dir": str(local_out)})
+
+    assert resolve_data_dir().resolve() == local_data.resolve()
+    assert resolve_out_dir().resolve() == local_out.resolve()
+
+
 def test_cli_overrides_env_data_dir(tmp_path, monkeypatch):
     """A CLI value takes priority over the environment variable."""
     env_dir = tmp_path / "from_env"
