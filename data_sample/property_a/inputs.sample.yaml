@@ -1,60 +1,86 @@
 # data_sample/property_a/inputs.sample.yaml
-# Sample investment property — realistic Irish BTL mortgage, fully fictitious values.
+# Sample investment property - realistic Irish BTL mortgage, fully fictitious values.
 # NEVER put real addresses, balances, or personal data here.
+#
+# Phase 10 / S2: migrated to the date-based Loan + contracts schema
+# (docs/contract_data_model.md Section A). The three legacy rate_blocks become
+# three contracts (a refix is a new contract on the same loan); known_first_payment
+# is the first contract's instalment; overpay_rules become the first contract's
+# standing_overpayment; the payment break moves to a contract payment_event
+# (parsed, not yet applied, exactly as the old bank.payment_holidays block was).
+# The engine derives month offsets from drawdown_date, so the schedule is
+# byte-identical to the pre-migration rate_blocks model.
 
 meta:
   property_id: property-a
   name: "Property A"
-  mode: investment
+  kind: investment
 
 loan:
-  property_price: 550000            # For LTV analytics and sell scenarios
-  principal_at_drawdown: 495000     # Net amount advanced on drawdown day
+  property_id: property-a
+  lender: boi
+  drawdown_amount: 495000           # New money advanced on drawdown day (was principal_at_drawdown)
   drawdown_date: 2024-03-26         # Loan start date (value date)
   total_term_months: 420            # Original contractual term
-  first_payment_date: 2024-08-14    # First bank debit (actual)
-  known_first_payment: 2123.44      # Contractual PMT excluding standing extras
-  repayment_day_default: 5          # Used only when no bank payment exists for a month
+  property_value: 550000            # For LTV analytics and sell scenarios (was property_price)
   property_growth_pa: 0.03          # Simple growth path for LTV (optional)
-  overpayment_cap_pct: 0.10         # BOI rule: 10% of opening balance per calendar year
+  repayment_day: 5                  # Projected payment day; used only when no bank payment exists for a month
+  first_payment_date: 2024-08-14    # First bank debit; anchors when the projected schedule begins
+  overpayment_cap_pct: 0.10         # Retired scalar (unused for any output); moves into the lender profile in S3
 
-  #If property revaluation blocks are needed to change either property value or growth rate, uncomment and edit below
+  # If property revaluation blocks are needed, uncomment and edit below
   #valuation_blocks:
-    #- { start: 2028-04-01, value: 600000, growth_pa: 0.01 }   # bank revalue at refix
-    #- { start: 2032-04-01, value: 640000, growth_pa: 0.02 }   # change long-run growth to 2%
+    #- { start: 2028-04-01, value: 600000, growth_pa: 0.01 }
+    #- { start: 2032-04-01, value: 640000, growth_pa: 0.02 }
 
-# Rate path; month numbers are from drawdown (1 = drawdown month).
-# Tip: prefer adding new blocks rather than editing historical ones.
-rate_blocks:
-  - { start_month: 1,  end_month: 48,  annual_rate: 0.0365, kind: fixed }
-  - { start_month: 49, end_month: 97,  annual_rate: 0.0475, kind: fixed }
-  - { start_month: 98, end_month: 999, annual_rate: 0.0400, kind: variable }
+  # Rate path as date-based contracts (a refix advances no new money, so it is a
+  # new contract on the same loan). start/end dates reproduce the legacy month
+  # windows exactly: months 1-48, 49-97, 98+ counted from drawdown.
+  contracts:
+    - id: A1
+      start_date: 2024-03-26        # month 1
+      end_date: 2028-02-29          # month 48
+      rate: 0.0365
+      rate_type: fixed
+      instalment: 2123.44           # known first payment (contractual PMT excl. standing extras)
+      standing_overpayment:
+        amount: 200.0               # was overpay_rules: +200/month from month 17
+        start_date: 2025-07-01      # month 17
+        end_date: null              # open-ended: runs to the end of term
+        note: "standing monthly overpayment from month 17"
+      payment_events:
+        - type: payment_holiday     # parsed and deferred (not applied); activation is the S4 re-baseline
+          start_date: 2024-03-26
+          end_date: 2024-07-31
+          treatment: interest_only
+          note: "interest-only break; capitalises. Deferred: the no-payment window today is set by first_payment_date."
+    - id: A2
+      start_date: 2028-03-01        # month 49
+      end_date: 2032-03-31          # month 97
+      rate: 0.0475
+      rate_type: fixed
+      instalment: null              # derive via PMT at the refix (RecalculatePayment)
+    - id: A3
+      start_date: 2032-04-01        # month 98
+      end_date: null                # open-ended variable tail
+      rate: 0.0400
+      rate_type: variable
+      instalment: null              # derive via PMT at the refix (RecalculatePayment)
 
-# When a new block starts and there is no actual payment in that month:
-#   RecalculatePayment → compute new PMT at new rate over remaining term
-#   TermReduction     → keep PMT, reduce term
+# When a new contract starts and there is no actual payment in that month:
+#   RecalculatePayment -> compute new PMT at the new rate over the remaining term
 strategy_at_refix: RecalculatePayment
 
-# Standing extras (applied on the payment date). Multiple rules allowed.
-overpay_rules:
-  - { start_month: 17, amount: 200.0, repeat: monthly, end_month: null }
-
-# One-off reductions on exact dates (optional).
-lump_sums: []     # e.g., [ { date: 2027-06-30, amount: 5000 } ]
-
-# --- Optional, bank-specific behaviour (not all are used yet) ---
+# --- Optional, bank-specific behaviour ---
 bank:
   day_count: ACT/365                # Engine uses /365 today; can extend to ACT/360, ACT/365F
   rounding_decimals: 2              # Post interest rounded to 2 decimals
-  merge_standing_extra_into_payment: true   # auto|true|false (engine infers from Actuals today)
+  merge_standing_extra_into_payment: true   # auto|true|false (must stay 'true' to match the golden)
   interest_posting_rule: actual_or_eom      # Use actual date when provided, else EOM
-  payment_holidays:                  # Interest-only or full deferral windows (capitalise interest)
-    - { start: 2024-03-26, end: 2024-07-31, mode: interest_only, capitalise: true }
 
-# --- BOI Screenshot for reconciliation ---
-
+# --- BOI screenshot for reconciliation ---
 reconcile:
-  ok_abs_eur: 300.00   # rows are OK if |model - bank| <= €300
+  ok_abs_eur: 300.00   # rows are OK if |model - bank| <= EUR300
   snapshots:
     - { date: 2025-10-10, balance: 489826.81 }
     - { date: 2025-11-06, balance: 489023.00 }

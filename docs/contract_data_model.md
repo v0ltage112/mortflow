@@ -1,8 +1,12 @@
+
+
 # Contract data model (Phase 10 build brief)
 
 > Section A (this file), authored in P9/S4: the Contract object and the loan / contract data model. Section B (lender profile, universal rules, cascade map, migration) is authored in S5; Section C (anonymisation mapping, data, Phase 10 plan) in S6.
 >
 > All figures below are illustrative placeholders, not real contract values. Real amounts, dates, and account numbers stay off-repo. This file carries structure and reasoning only, never verbatim legal wording.
+
+> Status (Phase 10, v2.0.0, shipped 2026-07-06): implemented. This brief is now live in code. The loan/contract split and the Contract object are the Loan, Contract, FollowOn, StandingOverpayment, and PaymentEvent dataclasses in src/engine/schema.py, carried on a frozen Inputs (with .copy() / .clone()); the rate path, the standing overpayment, and the instalment logic are consumed from the contracts in src/engine/monthly.py and src/engine/simulate.py, and the portal metric in src/engine/report.py. The lender profile (Section B and docs/lender_profile.md) resolves in src/engine/profile.py. The date anchors (LP7), the overpayment cap basis (max(10% of the monthly instalment, EUR 65 floor)), and the Modified Following payment-date convention on an Irish business-day calendar are all in force as of v2.0.0. This document remains the design brief; the live repo is the source of truth.
 
 ## A0. Purpose and scope
 

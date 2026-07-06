@@ -1,0 +1,11 @@
+# requirements-dev.txt
+# Dev/test-only dependencies. NOT required to run the engine and never imported
+# by src/. Kept separate from requirements.txt so the runtime and the golden
+# master stay dependency-light and deterministic.
+#
+# holidays: used only by tools/verify_calendar.py and
+# tests/test_calendar_cross_check.py to cross-check src/engine/calendar_ie.py.
+# Upgrading it can change reported holiday dates, so treat any upgrade as a
+# deliberate, reviewed step (see docs/calendar_maintenance.md), not a routine
+# bump.
+holidays>=0.50

@@ -1,47 +1,55 @@
 meta:
   property_id: property-a
   name: Property A
-  mode: investment
+  kind: investment
 loan:
-  property_price: 550000
-  principal_at_drawdown: 495000
+  property_id: property-a
+  lender: boi
+  drawdown_amount: 495000
   drawdown_date: 2024-03-26
   total_term_months: 420
-  first_payment_date: 2024-08-14
-  known_first_payment: 2123.44
-  repayment_day_default: 5
+  property_value: 550000
   property_growth_pa: 0.03
+  repayment_day: 5
+  first_payment_date: 2024-08-14
   overpayment_cap_pct: 0.1
-rate_blocks:
-- start_month: 1
-  end_month: 48
-  annual_rate: 0.0365
-  kind: fixed
-- start_month: 49
-  end_month: 97
-  annual_rate: 0.0475
-  kind: fixed
-- start_month: 98
-  end_month: 999
-  annual_rate: 0.04
-  kind: variable
+  contracts:
+  - id: A1
+    start_date: 2024-03-26
+    end_date: 2028-02-29
+    rate: 0.0365
+    rate_type: fixed
+    instalment: 2123.44
+    standing_overpayment:
+      amount: 200.0
+      start_date: 2025-07-01
+      end_date: null
+      note: standing monthly overpayment from month 17
+    payment_events:
+    - type: payment_holiday
+      start_date: 2024-03-26
+      end_date: 2024-07-31
+      treatment: interest_only
+      note: 'interest-only break; capitalises. Deferred: the no-payment window today
+        is set by first_payment_date.'
+  - id: A2
+    start_date: 2028-03-01
+    end_date: 2032-03-31
+    rate: 0.0475
+    rate_type: fixed
+    instalment: null
+  - id: A3
+    start_date: 2032-04-01
+    end_date: null
+    rate: 0.04
+    rate_type: variable
+    instalment: null
 strategy_at_refix: RecalculatePayment
-overpay_rules:
-- start_month: 17
-  amount: 200.0
-  repeat: monthly
-  end_month: null
-lump_sums: []
 bank:
   day_count: ACT/365
   rounding_decimals: 2
   merge_standing_extra_into_payment: true
   interest_posting_rule: actual_or_eom
-  payment_holidays:
-  - start: 2024-03-26
-    end: 2024-07-31
-    mode: interest_only
-    capitalise: true
 reconcile:
   ok_abs_eur: 300.0
   snapshots:

@@ -24,6 +24,18 @@ beside the KPI workbook, matching the engine's writer paths. The
 ``baseline_kpis.xlsx`` and the ``baseline.effective.inputs.yaml`` snapshot stay
 at the property root. CSV contents are unchanged, so the golden master (which
 compares CSV values) stays green; only the paths moved.
+
+Phase 10 / S3 note: the strict-baseline sanitiser now also strips each
+contract's ``standing_overpayment``. When Property A was converted to the
+contracts schema in S2, its recurring +EUR200/month overpayment moved off the
+top-level ``overpay_rules`` and onto ``loan.contracts[].standing_overpayment``,
+so clearing ``overpay_rules`` alone no longer produced a contract-only strict
+baseline. Stripping the per-contract window restores exact equivalence with the
+pre-migration strict baseline (which stripped that same extra via
+``overpay_rules``). The legacy ``overpay_rules`` clear and the merge-off line are
+kept so a strict baseline of a still-legacy property (B/C) is unchanged. Note
+the golden master builds the baseline non-strict, so this change moves no locked
+fixture.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -88,19 +100,45 @@ def _is_valuation_only(p: dict) -> bool:
 
 def _sanitize_for_strict_baseline(cfg: dict) -> dict:
     """
-    Return a deep-copied inputs dict with user overlays removed.
+    Return a deep-copied inputs dict with every voluntary-overpayment overlay
+    removed, so the run produces the contract-only baseline.
 
-    - Removes recurring overpays and one-off lumps.
-    - Turns off merging extras into the base payment (to avoid hidden +€200).
-    - Leaves contractual holidays and rate blocks intact.
+    Phase 10 / S3: the recurring standing overpayment moved off the top-level
+    ``overpay_rules`` and onto each contract's ``standing_overpayment`` window
+    (``loan.contracts[].standing_overpayment``) when Property A was converted to
+    the contracts schema in S2. A strict baseline must therefore strip the
+    per-contract standing_overpayment as well, or the +EUR200/month extra would
+    leak into the "no overpayments" reference. This keeps the strict baseline
+    exactly equivalent to the pre-migration one (which stripped overpay_rules).
+
+    What it removes:
+    - Each contract's ``standing_overpayment`` (the new-schema recurring extra).
+    - The one-off ``lump_sums`` overlay.
+    - The legacy top-level ``overpay_rules`` (still used by un-migrated files),
+      and forces ``bank.merge_standing_extra_into_payment`` off, so a strict
+      baseline of a still-legacy property stays contract-only too.
+
+    It leaves contractual holidays, rate blocks, and the contracts' agreed
+    instalments and rates intact: those are the contract, not an overlay.
     """
     c = copy.deepcopy(cfg)
 
-    # Remove overpay and lump overlays completely
-    c["overpay_rules"] = []
+    # New-schema recurring extra: strip each contract's standing_overpayment.
+    # The extra now rides inside loan.contracts[].standing_overpayment (P10/S2),
+    # so removing the top-level overpay_rules alone no longer clears it.
+    loan = c.get("loan")
+    if isinstance(loan, dict):
+        for contract in (loan.get("contracts") or []):
+            if isinstance(contract, dict):
+                contract.pop("standing_overpayment", None)
+
+    # One-off lump sums: removed in both schemas.
     c["lump_sums"] = []
 
-    # Bank merging of extras into base → force off for baseline clarity
+    # Legacy overlays: still honoured for un-migrated files so their strict
+    # baseline is unchanged. overpay_rules is the pre-contracts recurring extra;
+    # merging extras into the base payment is forced off for baseline clarity.
+    c["overpay_rules"] = []
     bank = c.get("bank") or {}
     bank["merge_standing_extra_into_payment"] = False
     c["bank"] = bank

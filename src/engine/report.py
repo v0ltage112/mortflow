@@ -6,7 +6,7 @@ Finance-readable summary
 This module is the presentation and headline-number layer. It does not run the
 loan simulation; it takes the already-computed schedule and event log and (a)
 makes the Excel workbook readable (tables, currency/percent/date formats) and
-(b) computes the "portal-style" figures a lender's online portal would show on
+(b) computes the \"portal-style\" figures a lender's online portal would show on
 a chosen date, namely the principal excluding interest not yet posted and the
 year-to-date interest including accrual up to that date. These feed the Summary
 sheet that a reviewer reads first.
@@ -15,10 +15,10 @@ Technical summary
 -----------------
 Worksheet helpers ``_add_table`` and ``_format_sheet`` plus the
 ``compute_portal_style_metrics`` calculation. The metric reuses
-``build_rate_lookup`` from ``.simulate`` to re-accrue interest day by day.
+``rate_lookup_for`` from ``.simulate`` to re-accrue interest day by day.
 
-Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py`` "XLSX
-helpers" and "Portal-style Summary metrics" sections. Behaviour is unchanged;
+Phase 5 / S1 note: lifted verbatim out of the original ``src/engine.py`` \"XLSX
+helpers\" and \"Portal-style Summary metrics\" sections. Behaviour is unchanged;
 only the module header, per-function finance notes, and the stderr status line
 were added.
 
@@ -28,6 +28,14 @@ optional ``money_format`` argument. Both default to the original euro mask
 (``€#,##0.00``), so every pre-S4 caller and the locked outputs are unchanged; the
 CLI and the valuation-only path pass the currency-derived mask so the ``output``
 block's ``currency`` knob is honoured in one place.
+
+Phase 10 / S2 note: the portal metric's interest re-accrual is repointed onto
+the contracts model. It now calls ``rate_lookup_for(inputs)`` (contracts, with a
+rate_blocks fallback) instead of ``build_rate_lookup(inputs.rate_blocks)``.
+Contracts reproduce the same per-month rate, so the portal principal and
+year-to-date interest are byte-identical. ``day_count`` stays sourced from
+``inputs.day_count``; sourcing it from the lender profile is deferred to a later
+session so the golden accrual divisor does not move here.
 """
 
 from __future__ import annotations
@@ -43,7 +51,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from .helpers import day_count_divisor, month_index
 from .schema import Inputs
-from .simulate import build_rate_lookup
+from .monthly import rate_lookup_for
 
 
 # Phase 6 / S4: map an ISO currency code to the symbol shown in front of money
@@ -77,7 +85,7 @@ def money_number_format(currency: Optional[str]) -> str:
         # original euro format string character for character for EUR.
         return f"{symbol}#,##0.00"
     # Unknown code: prefix the ISO code and a space so the value stays labelled.
-    return f'"{code} "#,##0.00'
+    return f'\"{code} \"#,##0.00'
 
 
 # =====================================================================
@@ -168,7 +176,7 @@ def compute_portal_style_metrics(
     ``ytd_interest_portal``
         Sum of posted interest in the calendar year plus the accrual for the
         current month up to (but excluding) ``snapshot_date``.  This mirrors how
-        many lender portals display "accrued but not yet posted" interest.
+        many lender portals display \"accrued but not yet posted\" interest.
     """
     if snapshot_date is None or events_df.empty:
         return {"principal_excl_unposted": None, "ytd_interest_portal": None}
@@ -208,7 +216,7 @@ def compute_portal_style_metrics(
         bal = float(before.iloc[-1]["balance"]) if not before.empty else float(inputs.principal_at_drawdown)
 
         divisor = day_count_divisor(inputs.day_count)
-        rate_of = build_rate_lookup(inputs.rate_blocks)
+        rate_of = rate_lookup_for(inputs)
         cur = start
         while cur <= end:
             mnum = month_index(inputs.drawdown_date, cur)

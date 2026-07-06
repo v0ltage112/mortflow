@@ -15,12 +15,12 @@ the Monthly schedule sheet and the tax outputs.
 
 Technical summary
 -----------------
-Holds the monthly scaffolding (``build_rate_lookup``, ``derive_modelling_end``,
-``month_span``, ``month_tables``) and ``build_monthly_schedule``, the post-loop
-assembly that consumes the daily loop's per-month collector dicts and produces
-the ``monthly`` DataFrame (per-month frame, posting date/year, model and bank
-end-of-month balances). Depends only on ``helpers`` and ``schema``; it must
-never import ``simulate``.
+Holds the monthly scaffolding (``build_rate_lookup``, ``rate_lookup_for``,
+``derive_modelling_end``, ``month_span``, ``month_tables``) and
+``build_monthly_schedule``, the post-loop assembly that consumes the daily
+loop's per-month collector dicts and produces the ``monthly`` DataFrame
+(per-month frame, posting date/year, model and bank end-of-month balances).
+Depends only on ``helpers`` and ``schema``; it must never import ``simulate``.
 
 Phase 5 / S3 note: lifted verbatim out of ``simulate.py``. Behaviour is
 unchanged; only the module location and imports differ. The golden master
@@ -54,13 +54,24 @@ difference attribution now wholly supersedes. This is a pure rename plus the
 removal of those two duplicated columns; every retained figure (total paid,
 interest, principal, balance, payoff) stays byte-identical to S3, and only the
 column names and the two dropped columns change.
+
+Phase 10 / S2 note: the rate lookup and the recurring overpayment are repointed
+onto the date-based contracts model. ``rate_lookup_for(inputs)`` builds the
+month-to-rate lookup from each contract's start_date/end_date (converted to
+1-based model months from drawdown), and ``month_tables`` expands each
+contract's ``standing_overpayment`` date window into the per-month recurring
+extra. Both keep a legacy fallback: a file with no contracts still reads
+``rate_blocks`` and ``overpay_rules`` exactly as before, so the still-legacy
+Property B/C samples stay byte-identical. Property A (converted to contracts)
+reproduces its retired rate windows and its month-17 / EUR200 standing extra
+exactly, so the Gandon golden does not move.
 """
 
 from __future__ import annotations
 
 import sys
 from datetime import date
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import pandas as pd
 
@@ -72,6 +83,7 @@ from .helpers import (
     ym_int,
 )
 from .schema import Inputs, RateBlock
+from .calendar_ie import adjust_for_convention, CONVENTION_DAY_CLAMP
 
 
 # =====================================================================
@@ -82,8 +94,12 @@ def build_rate_lookup(blocks: List[RateBlock]):
     """Return a callable mapping model month numbers to annual rates.
 
     Finance note: the loan's rate changes at refix dates. This turns the list of
-    rate blocks into a quick "what rate applies in month N?" lookup that drives
+    rate blocks into a quick \"what rate applies in month N?\" lookup that drives
     daily interest.
+
+    Phase 10 / S2: retained unchanged as the legacy fallback. ``rate_lookup_for``
+    is the going-forward entry point; it calls this only for files that carry no
+    contracts (the still-legacy Property B/C samples).
     """
     def rate_of_month(m: int) -> float:
         for rb in blocks:
@@ -91,6 +107,46 @@ def build_rate_lookup(blocks: List[RateBlock]):
                 return rb.annual_rate
         return blocks[-1].annual_rate
     return rate_of_month
+
+
+def _contract_month_ranges(inputs: Inputs) -> List[Tuple[int, int, float]]:
+    """Convert each contract's date span to a ``(start_month, end_month, rate)``.
+
+    Finance note: the engine counts months from drawdown (month 1 = the drawdown
+    month), so a contract's start_date/end_date become 1-based model months and
+    the date-based contracts reproduce the month-number rate windows exactly. An
+    open-ended contract (no end_date) runs to a large sentinel month, so the
+    final contract's rate applies to every remaining month, just as the last
+    rate_block did.
+    """
+    ranges: List[Tuple[int, int, float]] = []
+    for c in inputs.contracts:
+        start_month = month_index(inputs.drawdown_date, c.start_date)
+        end_month = month_index(inputs.drawdown_date, c.end_date) if c.end_date else 10 ** 6
+        ranges.append((start_month, end_month, float(c.rate)))
+    return ranges
+
+
+def rate_lookup_for(inputs: Inputs):
+    """Return a callable mapping model month numbers to annual rates.
+
+    Finance note: the rate path is now contract-driven. Each contract's date
+    span becomes a model-month window, giving the same \"what rate applies in
+    month N?\" lookup the legacy rate_blocks provided. A file with no contracts
+    (the still-legacy Property B/C samples) falls back to the rate_blocks path,
+    so those runs stay byte-identical.
+    """
+    if inputs.contracts:
+        ranges = _contract_month_ranges(inputs)
+        last_rate = float(inputs.contracts[-1].rate)
+
+        def rate_of_month(m: int) -> float:
+            for start_month, end_month, rate in ranges:
+                if start_month <= m <= end_month:
+                    return rate
+            return last_rate
+        return rate_of_month
+    return build_rate_lookup(inputs.rate_blocks)
 
 
 def derive_modelling_end(inputs: Inputs) -> date:
@@ -123,6 +179,26 @@ def month_span(start: date, end: date) -> List[date]:
     return out
 
 
+def _payment_convention_on(inputs: Inputs, anchor: date) -> str:
+    """Return the payment-date convention in force on ``anchor``.
+
+    Finance note: the convention is a lender-profile rule (LP3/LP7): resolve
+    the rule version in force on the scheduled date and read its
+    payment_date_convention. A file with no resolved profile (legacy Property
+    B/C, or any file without a lender key) falls back to 'day_clamp', the
+    engine's historical behaviour, so only a profile that states
+    modified_following moves any date.
+    """
+    profile = getattr(inputs, "profile", None)
+    if profile is None:
+        return CONVENTION_DAY_CLAMP
+    try:
+        return profile.rule_on(anchor).payment_date_convention
+    except ValueError:
+        # No rule version on or before the anchor: keep the safe default.
+        return CONVENTION_DAY_CLAMP
+
+
 def month_tables(inputs: Inputs, actuals: pd.DataFrame) -> pd.DataFrame:
     """Build a per-month summary table consumed by the daily engine.
 
@@ -138,20 +214,39 @@ def month_tables(inputs: Inputs, actuals: pd.DataFrame) -> pd.DataFrame:
     mstarts = month_span(inputs.drawdown_date, end)
     g = actuals.groupby("ym", dropna=False)
 
-    # Expand standing extras into {month_num: amount}
+    # Expand standing extras into {month_num: amount}. Phase 10 / S2: the agreed
+    # recurring overpayment now rides on each contract's standing_overpayment (a
+    # date window). Its start_date/end_date are converted to model months and
+    # expanded monthly, matching the legacy overpay_rules expansion exactly (an
+    # open-ended window runs to the end of term). A file with no contracts
+    # (Property B/C samples until their data is converted) falls back to the
+    # legacy overpay_rules path, so those runs stay byte-identical.
     recurring_by_month: Dict[int, float] = {}
-    for rule in inputs.overpay_rules:
-        s = int(rule["start_month"])
-        amt = float(rule["amount"])
-        endm = rule.get("end_month", None)
-        rep = str(rule.get("repeat", "monthly")).lower()
-        if rep == "monthly":
-            i = s
-            while i <= inputs.total_term_months and (endm is None or i <= int(endm)):
+    if inputs.contracts:
+        for c in inputs.contracts:
+            so = c.standing_overpayment
+            if so is None:
+                continue
+            s = month_index(inputs.drawdown_date, so.start_date)
+            endm = month_index(inputs.drawdown_date, so.end_date) if so.end_date else None
+            amt = float(so.amount)
+            i = max(1, s)
+            while i <= inputs.total_term_months and (endm is None or i <= endm):
                 recurring_by_month[i] = recurring_by_month.get(i, 0.0) + amt
                 i += 1
-        else:
-            recurring_by_month[s] = recurring_by_month.get(s, 0.0) + amt
+    else:
+        for rule in inputs.overpay_rules:
+            s = int(rule["start_month"])
+            amt = float(rule["amount"])
+            endm = rule.get("end_month", None)
+            rep = str(rule.get("repeat", "monthly")).lower()
+            if rep == "monthly":
+                i = s
+                while i <= inputs.total_term_months and (endm is None or i <= int(endm)):
+                    recurring_by_month[i] = recurring_by_month.get(i, 0.0) + amt
+                    i += 1
+            else:
+                recurring_by_month[s] = recurring_by_month.get(s, 0.0) + amt
 
     rows = []
     for ms in mstarts:
@@ -178,7 +273,12 @@ def month_tables(inputs: Inputs, actuals: pd.DataFrame) -> pd.DataFrame:
         # Default payment date only if no actual payment that month
         def_pay = None
         if ms >= date(inputs.first_payment_date.year, inputs.first_payment_date.month, 1):
-            def_pay = clamp_day(ms.year, ms.month, inputs.repayment_day_default)
+            # Phase 10 / S4: clamp to the repayment day, then apply the lender
+            # profile's payment-date convention (modified_following) so
+            # projected debits land on Irish working days. day_clamp (or no
+            # profile) preserves the prior behaviour.
+            clamped = clamp_day(ms.year, ms.month, inputs.repayment_day_default)
+            def_pay = adjust_for_convention(clamped, _payment_convention_on(inputs, clamped))
 
         rows.append(
             dict(
