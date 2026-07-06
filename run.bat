@@ -14,8 +14,8 @@ pip install -r requirements.txt || goto :err
 
 REM --- Resolve data and output folders from the Phase 2 config layer ---
 REM DATA_DIR / OUT_DIR honour CLI > env > paths.local.yaml > repo defaults.
-for /f "delims=" %%i in ('python -c "from src.paths import resolve_data_dir; print(resolve_data_dir())"') do set "DATA_DIR=%%i"
-for /f "delims=" %%i in ('python -c "from src.paths import resolve_out_dir; print(resolve_out_dir())"') do set "OUT_DIR=%%i"
+for /f "delims=" %%i in ('python tools\_resolve.py data') do set "DATA_DIR=%%i"
+for /f "delims=" %%i in ('python tools\_resolve.py out') do set "OUT_DIR=%%i"
 
 REM --- Phase S0: build frozen baselines (contract + as-of) ---
 python -m tools.baseline --portfolio "%DATA_DIR%\portfolio.yaml" --out "%OUT_DIR%" || goto :err
