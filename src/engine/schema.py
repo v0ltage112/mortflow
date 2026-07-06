@@ -73,6 +73,19 @@ unchanged, so the still-legacy Property B/C samples and the Gandon golden stay
 byte-identical. The rate path and the recurring overpayment are consumed from
 the contracts by monthly.py / simulate.py; rate_blocks and overpay_rules stay
 empty for a converted file.
+
+Phase 10 / S3 note: the scalar ``overpayment_cap_pct`` is retired from
+``Inputs`` and its loader. It was dead code: read into ``Inputs`` (the legacy
+\"10% of the opening balance per year\") but never consumed for any output
+figure. The overpayment cap is now resolved from the lender profile per
+contract (``resolve_overpayment_cap_allowance`` / ``overpayment_cap_for_contract``:
+max(percent of the monthly instalment, EUR floor), using the rule in force on
+the contract's start_date, LP4/LP7), and the breakage-charge reference is wired
+from the profile (``resolve_breakage_reference``: the catalogued formula,
+flagged \"not computable\" when the external R%/R1% money-market rates are absent,
+LP5/LP6). Both are reference-only resolvers consumed by no output figure, so
+every current number and the golden master stay byte-identical. The sample files
+keep an inert ``overpayment_cap_pct`` key, which the loader now ignores.
 """
 
 from __future__ import annotations
@@ -354,7 +367,6 @@ class Inputs:
     known_first_payment: float
     repayment_day_default: int
     property_growth_pa: float           # decimal (0.01 -> 1% p.a.). If >1, treated as %
-    overpayment_cap_pct: float
     rate_blocks: List[RateBlock]
     strategy_at_refix: str              # 'RecalculatePayment' | 'TermReduction'
     overpay_rules: List[dict]           # standing extras (by start month)
@@ -399,7 +411,7 @@ class Inputs:
         """Return a new Inputs with the given fields replaced (frozen-safe clone).
 
         Finance note: Inputs is immutable (a frozen dataclass), so scenario work
-        never mutates the baseline in place. ``inputs.copy(overpayment_cap_pct=...)``
+        never mutates the baseline in place. ``inputs.copy(merge_extra_mode=...)``
         returns an independent Inputs with just those fields changed; the
         original is untouched. ``.clone()`` is an alias. Design decision #5 and
         the foundation for the Phase 14 clone-and-perturb scenarios.
@@ -896,7 +908,6 @@ def load_inputs(path: Path) -> Inputs:
         known_first_payment=known_first_val,
         repayment_day_default=repayment_day_val,
         property_growth_pa=float(loan.get("property_growth_pa", 0.0)),
-        overpayment_cap_pct=float(loan.get("overpayment_cap_pct", 0.10)),
         rate_blocks=blocks,
         strategy_at_refix=str(strat),
         overpay_rules=overp,
@@ -939,6 +950,131 @@ def load_actuals(csv_path: Path) -> pd.DataFrame:
     if "run_balance" not in df.columns:
         df["run_balance"] = np.nan
     return df
+
+
+# =====================================================================
+# Phase 10 / S3: profile-derived overpayment cap and breakage reference
+# =====================================================================
+# The scalar overpayment_cap_pct is retired (see the module note). These
+# resolvers read the going-forward cap allowance and breakage-charge reference
+# from the lender profile. Both are reference-only: no output figure consumes
+# them, so the golden master stays byte-identical. They live here, next to the
+# schema that carries the resolved profile and contracts, so there is a single
+# place that turns the profile rulebook into per-contract figures.
+
+
+def resolve_overpayment_cap_allowance(
+    profile: Optional[LenderProfile],
+    instalment: Optional[float],
+    anchor: Optional[date],
+) -> Optional[float]:
+    """Return the per-payment voluntary-overpayment allowance in euro, or None.
+
+    Finance note: the retired scalar cap (the legacy \"10% of the opening balance
+    per year\") is replaced by the lender profile's overpayment_cap rule in force
+    on ``anchor`` (LP4/LP7). For the BOI-style rule this is
+    ``max(percent * monthly instalment, floor_eur)``, assessed per payment. The
+    result is a reference figure only; no output number consumes it.
+
+    Returns None when the allowance cannot be resolved: no profile, no anchor,
+    no instalment (the allowance is a fraction of the monthly repayment), no cap
+    rule in force, or a basis this engine does not model. Returning None rather
+    than 0.0 keeps \"unknown\" distinct from \"no headroom\".
+    """
+    if profile is None or anchor is None or instalment is None:
+        return None
+    try:
+        rule = profile.rule_on(ensure_date(anchor))
+    except ValueError:
+        # No rule version in force on or before the anchor: treat as unresolved
+        # rather than raising, since this is reference-only wiring.
+        return None
+    cap = rule.overpayment_cap
+    if cap is None or cap.basis != "percent_of_monthly_repayment":
+        return None
+    percent = cap.percent or 0.0
+    floor = cap.floor_eur or 0.0
+    return max(percent * float(instalment), floor)
+
+
+def overpayment_cap_for_contract(
+    profile: Optional[LenderProfile], contract: Optional[Contract]
+) -> Optional[float]:
+    """Return the overpayment-cap allowance for one contract, anchored on its start.
+
+    Finance note: LP7 anchors the cap on the contract period, so the allowance
+    uses the rule in force on the contract's ``start_date`` applied to that
+    contract's monthly ``instalment``. Returns None when the contract states no
+    instalment or the profile cannot resolve a rule. Reference-only.
+    """
+    if contract is None:
+        return None
+    return resolve_overpayment_cap_allowance(profile, contract.instalment, contract.start_date)
+
+
+@dataclass
+class BreakageReference:
+    """A resolved early-repayment-charge reference for a contract (LP5/LP6).
+
+    Finance note: the breakage charge follows the lender's catalogued formula
+    (BOI: ``principal_x_rate_differential_x_remaining_years``). The rate
+    differential needs two external money-market rates, R% (funding) and R1%
+    (deposit), resolved on the breakage-quote date. When the profile carries no
+    formula, or those rates are absent on the quote date, the charge is flagged
+    ``computable = False`` (\"not computable\") rather than guessed. This is a
+    reference only: no output figure consumes it.
+    """
+
+    formula: Optional[str]
+    computable: bool
+    funding_rate: Optional[float] = None   # R%
+    deposit_rate: Optional[float] = None   # R1%
+    note: str = ""
+
+
+def resolve_breakage_reference(
+    profile: Optional[LenderProfile],
+    anchor: Optional[date],
+    quote_date: Optional[date] = None,
+) -> Optional[BreakageReference]:
+    """Return the breakage-formula reference for a contract, or None.
+
+    Finance note: reads the breakage formula from the rule in force on the
+    contract ``anchor`` (LP5) and the external R%/R1% money-market rates on the
+    breakage ``quote_date`` (LP6). The charge is \"not computable\"
+    (``computable = False``) when the profile carries no breakage formula, no
+    quote date is supplied, or the money-market rates are absent on that date;
+    docs/lender_profile.md states R%/R1% are external and nullable. Returns None
+    only when there is no profile or no anchor to resolve against. Reference-only.
+    """
+    if profile is None or anchor is None:
+        return None
+    try:
+        rule = profile.rule_on(ensure_date(anchor))
+    except ValueError:
+        return None
+    breakage = rule.breakage
+    if breakage is None or not breakage.formula:
+        return BreakageReference(
+            formula=(breakage.formula if breakage is not None else None),
+            computable=False,
+            note="not computable: the lender profile carries no breakage formula",
+        )
+    quote = ensure_date(quote_date) if quote_date is not None else None
+    mm = profile.money_market_on(quote) if quote is not None else None
+    if mm is None or mm.funding_rate is None or mm.deposit_rate is None:
+        return BreakageReference(
+            formula=breakage.formula,
+            computable=False,
+            note="not computable: external R%/R1% money-market rates absent on the quote date",
+        )
+    return BreakageReference(
+        formula=breakage.formula,
+        computable=True,
+        funding_rate=mm.funding_rate,
+        deposit_rate=mm.deposit_rate,
+        note="",
+    )
 
 
 print("[engine.schema] input schema and loaders ready", file=sys.stderr)

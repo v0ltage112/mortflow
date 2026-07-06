@@ -10,6 +10,11 @@ docs/lender_profile.md.
 Phase 10 / S2 note: test_legacy_inputs_parse_additively_no_contracts now uses
 Property B (still legacy) because Property A was converted to the contracts
 schema in S2. Property B is the canonical legacy reference until S5/S6.
+
+Phase 10 / S3 note: test_inputs_is_frozen_and_copy_clones no longer asserts on
+the retired scalar overpayment_cap_pct (removed from Inputs this session). It now
+exercises the same frozen/copy/clone contract via merge_extra_mode and
+reconcile_ok_abs_eur, so the immutability guarantee is still locked.
 """
 
 from __future__ import annotations
@@ -150,13 +155,18 @@ def test_legacy_inputs_parse_additively_no_contracts():
 
 
 def test_inputs_is_frozen_and_copy_clones():
-    """Inputs is immutable; .copy()/.clone() return independent instances."""
+    """Inputs is immutable; .copy()/.clone() return independent instances.
+
+    Phase 10 / S3: the retired scalar overpayment_cap_pct is gone, so the
+    frozen/copy/clone contract is exercised via merge_extra_mode (a string field
+    Property A sets to \"true\") and reconcile_ok_abs_eur instead.
+    """
     inputs = load_inputs(PROPERTY_A)
     with pytest.raises(FrozenInstanceError):
-        inputs.overpayment_cap_pct = 0.5  # type: ignore[misc]
-    clone = inputs.copy(overpayment_cap_pct=0.25)
-    assert clone.overpayment_cap_pct == 0.25
-    assert inputs.overpayment_cap_pct == 0.10
+        inputs.merge_extra_mode = "false"  # type: ignore[misc]
+    clone = inputs.copy(merge_extra_mode="false")
+    assert clone.merge_extra_mode == "false"
+    assert inputs.merge_extra_mode == "true"
     assert clone is not inputs
-    clone2 = inputs.clone(merge_extra_mode="false")
-    assert clone2.merge_extra_mode == "false"
+    clone2 = inputs.clone(reconcile_ok_abs_eur=0.5)
+    assert clone2.reconcile_ok_abs_eur == 0.5
