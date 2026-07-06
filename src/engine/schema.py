@@ -705,6 +705,70 @@ def _resolve_payment_events(entries) -> List[PaymentEvent]:
     return out
 
 
+def _payment_holiday_from_event(event: PaymentEvent) -> Optional[PaymentHoliday]:
+    """Map a contract ``payment_event`` of type ``payment_holiday`` to a legacy PaymentHoliday.
+
+    Finance note: Phase 10 moved the payment break off the legacy
+    ``bank.payment_holidays`` block and onto the contract as a ``payment_event``
+    (docs/contract_data_model.md Section A4). The engine still exposes the
+    parsed-and-deferred break through ``Inputs.payment_holidays`` so the S4
+    validation, and any future activation, read one list regardless of which
+    schema a file uses. The event's ``treatment`` carries the legacy ``mode``
+    when it names a recognised one ('interest_only' | 'full_deferral'); any
+    other treatment falls back to 'interest_only'. Unpaid interest on a break
+    capitalises, so ``capitalise`` is True, matching the pre-migration default.
+
+    Returns None for a non-holiday event or one missing an end date, so an
+    unrelated or half-open event is skipped rather than guessed. A reversed
+    window (end before start) is a config error and raises, mirroring the legacy
+    bank-block validation.
+    """
+    # Only payment-holiday events map to the legacy holiday view; other event
+    # types (for example a part_capital_increase) are not holidays.
+    if event.type != "payment_holiday":
+        return None
+    # A holiday needs a closed window; a half-open event cannot be validated or
+    # applied, so skip it rather than invent an end date.
+    if event.end_date is None:
+        return None
+    # A reversed window is a config error, exactly as the legacy bank block treats it.
+    if event.end_date < event.start_date:
+        raise ValueError(
+            f"payment holiday end {event.end_date} is before start "
+            f"{event.start_date}; fix the window on the contract payment_event"
+        )
+    # The new-schema treatment carries the legacy mode when it names one;
+    # anything else (or a blank) degrades to the interest-only default.
+    treatment = (event.treatment or "").strip().lower()
+    mode = treatment if treatment in _VALID_PAYMENT_HOLIDAY_MODES else "interest_only"
+    # Unpaid interest on a break capitalises; the legacy default was True.
+    return PaymentHoliday(
+        start=event.start_date,
+        end=event.end_date,
+        mode=mode,
+        capitalise=True,
+    )
+
+
+def _payment_holidays_from_contracts(contracts: List[Contract]) -> List[PaymentHoliday]:
+    """Derive legacy PaymentHoliday records from every contract's payment_events.
+
+    Finance note: gathers each ``payment_holiday`` payment_event across the
+    loan's contracts and expresses it in the legacy PaymentHoliday shape, so a
+    migrated file (holiday on the contract) and an un-migrated file (holiday in
+    ``bank.payment_holidays``) both surface the same parsed-and-deferred break.
+    A file with no contracts, or contracts with no holiday events, yields an
+    empty list, so legacy samples are untouched.
+    """
+    out: List[PaymentHoliday] = []
+    for contract in contracts:
+        for event in contract.payment_events:
+            holiday = _payment_holiday_from_event(event)
+            if holiday is not None:
+                out.append(holiday)
+    return out
+
+
 def _resolve_contracts(loan: dict) -> List[Contract]:
     """Parse the new-schema ``loan.contracts`` array (Section A).
 
@@ -864,6 +928,21 @@ def load_inputs(path: Path) -> Inputs:
     lender = (loan.get("lender") if loan else None)
     contracts = _resolve_contracts(loan)
     loan_v2 = _resolve_loan_v2(loan, contracts, meta)
+
+    # Phase 10 / S5: the payment break moved from the legacy bank.payment_holidays
+    # block onto the contract as a payment_event (docs/contract_data_model.md
+    # Section A4). Derive the legacy PaymentHoliday view from the contracts and
+    # union it with any bank block, de-duped on the (start, end) window, so
+    # Inputs.payment_holidays surfaces the parsed-and-deferred break for both the
+    # migrated and the un-migrated schema without double-counting a file that
+    # still carries both. Reference/validation-only: no output figure consumes
+    # payment_holidays, so the golden master stays byte-identical.
+    _seen_holiday_windows = {(h.start, h.end) for h in payment_holidays}
+    for _ph in _payment_holidays_from_contracts(contracts):
+        if (_ph.start, _ph.end) not in _seen_holiday_windows:
+            payment_holidays.append(_ph)
+            _seen_holiday_windows.add((_ph.start, _ph.end))
+
     profile: Optional[LenderProfile] = None
     if lender:
         lenders_dir = Path(path).resolve().parent.parent / "lenders"
