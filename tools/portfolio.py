@@ -50,15 +50,16 @@ date the live-position figures are already anchored on; for a valuation-only row
 it is the run date, matching the as-of-today value that row already reports.
 Engine maths is still untouched.
 
-Technical summary
------------------
-``run_engine_cli`` appends ``--actuals`` only when one is given. The main loop
-classifies each enabled property as mortgage-bearing or valuation-only, runs the
-right engine path, and appends the matching summary row. ``_mortgage_summary_row``
-builds the locked row from the monthly schedule, the event log (payoff date via
-``compute_baseline_kpis``), and the optional tax-year file; ``_valuation_summary_row``
-builds the no-loan row. The combined DataFrame is reindexed onto the locked
-column order, so a valuation-only property's loan columns are simply blank.
+Phase 11 / S2 note: an interim currency guard keeps a non-euro property out of
+the euro value column. The rollup's ``property_value`` column is a euro column
+(Properties A and B). Property C reports in PKR, so folding its rupee value into
+that column would let a naive sum mix currencies. Until the S3 refactor adds a
+proper currency column and a dedicated native-value row (Architecture Decision
+7), ``_valuation_summary_row`` takes the property's currency and, for a non-euro
+property, leaves ``property_value`` blank in the rollup (the value still lives in
+the property's own ``<slug>_model.xlsx``). A euro property is completely
+unchanged. No column is added or removed here; that is deliberately deferred to
+S3. Engine maths is untouched.
 """
 from __future__ import annotations
 import argparse, subprocess, sys
@@ -180,6 +181,18 @@ def _count_true(series: pd.Series) -> int:
         return int(filled.sum())
     text = filled.astype(str).str.strip().str.lower()
     return int(text.isin(["true", "1", "yes"]).sum())
+
+def _is_eur_currency(currency) -> bool:
+    """Return True when a property reports in euro, the rollup's base currency.
+
+    Finance note: the portfolio rollup's ``property_value`` column is a euro
+    column (Properties A and B). A property that reports in another currency
+    (Property C in PKR) must not drop its native figure into that euro column,
+    or a naive sum would mix currencies. A missing or blank currency is treated
+    as euro, matching the engine's default, so existing euro properties behave
+    exactly as before.
+    """
+    return str(currency or "EUR").strip().upper() == "EUR"
 
 def _derive_as_of(csv_dir: Path, inputs_path: Path) -> Optional[_dt.date]:
     """Return the deterministic 'as-of' date the current snapshot is taken at.
@@ -450,7 +463,7 @@ def _mortgage_summary_row(
         "tax_deductible_interest": tax_deductible_interest,
     }
 
-def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: bool) -> Dict:
+def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: bool, currency: str) -> Dict:
     """Build one locked portfolio-summary row for a valuation-only property.
 
     Finance note: an owned-outright property has no loan, so every loan and
@@ -463,6 +476,14 @@ def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: boo
 
     Phase 8 / S3: ``csv_dir`` is the property's csv/ sub-folder, where the engine
     now writes the CSV.
+
+    Phase 11 / S2 interim currency guard: the rollup's ``property_value`` column
+    is a euro column. A euro property fills it as before. A non-euro property
+    (Property C in PKR) leaves it blank, so a naive euro sum over the column can
+    never mix currencies; the rupee value still lives in the property's own
+    ``<slug>_model.xlsx``. The proper currency column and a dedicated native
+    value row land in S3 (Architecture Decision 7); this is the minimal interim
+    guard.
     """
     val_csv = csv_dir / "valuation_schedule.csv"
     if not val_csv.exists():
@@ -474,15 +495,33 @@ def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: boo
     month_starts = sched["month_start"].apply(_to_date)
     mask = month_starts.apply(lambda d: d is not None and d <= today)
     current = sched.loc[mask].iloc[-1] if mask.any() else sched.iloc[-1]
-    return {
+    native_value = float(current["property_value"])
+
+    # Every valuation-only row carries the descriptive columns and the run-date
+    # snapshot. The value column is filled only for a euro property.
+    row: Dict = {
         # Phase 8 / S5: the snapshot date for a no-loan property is the run date,
         # matching the as-of-today property value reported below.
         "as_of_date": today,
         "property_name": name,
         "property_kind": kind,
         "tax_enabled": tax_enabled,
-        "property_value": float(current["property_value"]),
     }
+    if _is_eur_currency(currency):
+        # Euro property: its value belongs in the euro property_value column.
+        row["property_value"] = native_value
+    else:
+        # Phase 11 / S2 interim currency guard: hold a non-euro value out of the
+        # euro column so the euro aggregate stays pure. The value is still
+        # visible in the property's own workbook; S3 adds the currency column.
+        print(
+            f"[tools.portfolio] currency guard: {name} reports in "
+            f"{str(currency).strip().upper()} (value {native_value:,.2f}); "
+            "held out of the euro property_value column until the S3 currency "
+            "column lands.",
+            file=sys.stderr,
+        )
+    return row
 
 # ---- Main --------------------------------------------------------------------
 
@@ -540,7 +579,9 @@ def main():
         # loan schedule, so it gets its own run + summary branch.
         if _is_valuation_only(p):
             run_engine_cli(inputs_path, None, out_dir)
-            rows.append(_valuation_summary_row(csv_dir, name, kind, tax_enabled))
+            # Phase 11 / S2: pass the property's reporting currency so the
+            # interim guard can keep a non-euro value out of the euro column.
+            rows.append(_valuation_summary_row(csv_dir, name, kind, tax_enabled, prop_inputs.output.currency))
             continue
 
         # Mortgage property: pass the bank actuals and read the monthly schedule.

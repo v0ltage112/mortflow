@@ -25,6 +25,16 @@ residence, tax off) does not. Each scope therefore carries its own locked file
 list, and the per-property CSV and effective-inputs tests are parametrised over
 every locked scope. Enabling Property B also changes the portfolio rollup, so
 `portfolio_summary.csv` is re-baselined alongside the new `property-b` fixtures.
+
+Phase 11 / S2 note: Property C (Paragon, owned outright) is added as a
+valuation-only scope. It has no mortgage, so it emits neither the baseline nor
+the loan/reconcile/tax CSVs; its single locked output is the value-over-time
+`valuation_schedule.csv`. The effective-inputs YAML lock therefore applies only
+to the mortgage scopes that run through the baseline tool (see
+`BASELINE_INPUTS_SCOPES`). Enabling C adds a third row to the portfolio rollup,
+so `portfolio_summary.csv` is re-baselined again; under the S2 interim currency
+guard C reports in PKR and its value is held out of the euro `property_value`
+column, so the euro aggregate itself is unchanged.
 """
 from __future__ import annotations
 
@@ -85,10 +95,17 @@ TAX_CSV_FILES = [
     "tax_year.csv",
     "tax_audit.csv",
 ]
+# Phase 11 / S2: a valuation-only property (owned outright, no mortgage) emits
+# only the value-over-time series. It has no baseline, loan, reconcile, or tax
+# files, so its locked list is just this one CSV.
+VALUATION_ONLY_CSV_FILES = [
+    "valuation_schedule.csv",
+]
 # Locked CSVs per property scope. Add a scope here to pin another property.
 PROPERTY_CSV_FILES = {
     "property-a": COMMON_PROPERTY_CSV_FILES + TAX_CSV_FILES,
     "property-b": COMMON_PROPERTY_CSV_FILES,
+    "property-c": VALUATION_ONLY_CSV_FILES,
 }
 # Flattened (scope, filename) pairs so each file is an independent test case.
 PROPERTY_CSV_CASES = [
@@ -100,6 +117,10 @@ PROPERTY_CSV_CASES = [
 ROOT_CSV_FILES = ["portfolio_summary.csv"]
 # Effective-inputs snapshot is locked byte-for-byte (not at 2dp), one per scope.
 YAML_FILE = "baseline.effective.inputs.yaml"
+# Phase 11 / S2: the effective-inputs snapshot is a baseline-tool artefact, so it
+# exists only for mortgage-bearing scopes. A valuation-only property (property-c)
+# never runs the baseline tool, so it is excluded from the byte-equal lock.
+BASELINE_INPUTS_SCOPES = ["property-a", "property-b"]
 
 # Half a cent: two monetary values that agree to 2dp never differ by more.
 MONEY_ATOL = 0.005
@@ -110,6 +131,11 @@ def _run_pipeline(out_dir: Path) -> None:
 
     Mirrors `run_sample.bat` exactly: baseline first, then portfolio, both
     pointed at the bundled `data_sample` portfolio and the temp out dir.
+
+    Phase 11 / S2: the sample portfolio now also enables Property C (owned
+    outright). The baseline tool has no contractual baseline to build for a
+    no-mortgage property and skips it; the portfolio tool runs C through the
+    valuation-only path and emits its `valuation_schedule.csv`.
     """
     # Force data + out locations through env so the run never depends on a
     # developer's paths.local.yaml. The explicit --out below still wins.
@@ -298,6 +324,10 @@ def test_property_csv_locked(generated_out: Path, scope: str, rel_name: str) -> 
 
     Phase 11 / S1: parametrised over every locked (scope, file) pair, so Property
     B is pinned alongside Property A. Property B omits the tax sheets (tax off).
+
+    Phase 11 / S2: Property C is pinned too, but as a valuation-only property its
+    only locked file is `valuation_schedule.csv` (no baseline, loan, reconcile,
+    or tax files exist for it).
     """
     _assert_csv_matches(
         # Produced side: one level deeper, under the property's csv/ folder.
@@ -316,6 +346,11 @@ def test_root_csv_locked(generated_out: Path, rel_name: str) -> None:
 
     Phase 11 / S1: the rollup now aggregates Property A and Property B, so this
     fixture was re-baselined when B was enabled.
+
+    Phase 11 / S2: the rollup now also carries Property C. C reports in PKR, and
+    under the interim currency guard its euro `property_value` cell is blank, so
+    the euro figures are unchanged and only the extra C row is new. The fixture
+    is re-baselined for the three-row rollup.
     """
     _assert_csv_matches(
         # Produced side: under the top-level csv/ folder.
@@ -325,7 +360,7 @@ def test_root_csv_locked(generated_out: Path, rel_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("scope", sorted(PROPERTY_CSV_FILES))
+@pytest.mark.parametrize("scope", sorted(BASELINE_INPUTS_SCOPES))
 def test_effective_inputs_yaml_byte_equal(generated_out: Path, scope: str) -> None:
     """The baseline effective-inputs snapshot is locked byte-for-byte, per scope.
 
@@ -335,6 +370,10 @@ def test_effective_inputs_yaml_byte_equal(generated_out: Path, scope: str) -> No
 
     Phase 11 / S1: parametrised per scope so Property B's resolved inputs are
     locked alongside Property A's.
+
+    Phase 11 / S2: only the mortgage scopes are checked. A valuation-only
+    property never runs the baseline tool, so it produces no effective-inputs
+    snapshot; property-c is excluded via BASELINE_INPUTS_SCOPES.
     """
     actual_path = generated_out / scope / YAML_FILE
     expected_path = GOLDEN_DIR / scope / YAML_FILE

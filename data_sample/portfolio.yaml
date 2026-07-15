@@ -35,6 +35,6 @@ properties:
   - name: Property C
     property_kind: owned_outright
     inputs: property_c/inputs.sample.yaml
-    enabled: false                    # committed sample stays Property A only so the golden master stays green; enable locally with real data
+    enabled: true                    
     out_dir: property-c
     tax_enabled: false

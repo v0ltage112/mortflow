@@ -24,6 +24,16 @@ carries two rows (Property A and Property B). The row-count check expects both
 enabled rows, and the populated-and-sane check selects the Property A row by
 name (not by position) so it stays correct regardless of row order.
 
+Phase 11 / S2: Property C (Paragon) is now enabled on the valuation-only path in
+PKR, so the sample rollup carries three rows (Property A, Property B, Property
+C). The row-count check expects all three enabled rows. Property C is owned
+outright with no mortgage and reports in PKR, so its loan-driven columns are
+empty and the interim currency guard in tools/portfolio.py holds its value out
+of the euro ``property_value`` column (the currency-aware column lands in S3).
+The Property A populated-and-sane check is unchanged: it selects Property A by
+name, so it stays correct regardless of row count or order. A dedicated check
+locks Property C's valuation-only shape.
+
 Technical summary
 -----------------
 Runs tools.baseline then tools.portfolio against data_sample/portfolio.yaml into
@@ -43,6 +53,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
 
 # The locked final column order for the rebuilt rollup (Phase 8 / S4, extended in
 # S5). This is the contract the runner writes and the order a reviewer reads left
@@ -128,16 +139,17 @@ def test_rollup_columns_locked(rollup: pd.DataFrame) -> None:
     )
 
 
-def test_rollup_has_both_enabled_rows(rollup: pd.DataFrame) -> None:
-    """Property A and Property B are both enabled, so the rollup has two rows.
+def test_rollup_has_all_enabled_rows(rollup: pd.DataFrame) -> None:
+    """Property A, B, and C are all enabled, so the rollup has three rows.
 
-    Phase 11 / S1 enabled Property B in the sample portfolio (previously the only
-    disabled property), so the rollup now carries exactly two rows. The check is
-    on the set of property names rather than their order, because the row order
-    is an implementation detail of the runner.
+    Phase 11 / S1 enabled Property B, and Phase 11 / S2 enabled Property C
+    (valuation-only, PKR) in the sample portfolio, so the rollup now carries
+    exactly three rows. The check is on the set of property names rather than
+    their order, because the row order is an implementation detail of the
+    runner.
     """
-    assert len(rollup) == 2, f"expected exactly two rollup rows, got {len(rollup)}"
-    assert set(rollup["property_name"]) == {"Property A", "Property B"}
+    assert len(rollup) == 3, f"expected exactly three rollup rows, got {len(rollup)}"
+    assert set(rollup["property_name"]) == {"Property A", "Property B", "Property C"}
 
 
 def test_rollup_row_is_populated_and_sane(rollup: pd.DataFrame) -> None:
@@ -152,7 +164,7 @@ def test_rollup_row_is_populated_and_sane(rollup: pd.DataFrame) -> None:
     Phase 11 / S1: with Property B now in the rollup, the Property A row is
     selected explicitly by name so this check no longer depends on row order.
     """
-    # Select the Property A row by name (Property B is also present from S1).
+    # Select the Property A row by name (Property B and C are also present).
     a_rows = rollup[rollup["property_name"] == "Property A"]
     assert len(a_rows) == 1, "expected exactly one Property A row in the rollup"
     row = a_rows.iloc[0]
@@ -187,3 +199,32 @@ def test_rollup_row_is_populated_and_sane(rollup: pd.DataFrame) -> None:
     # Property A has rental tax on, so the Section 97 deductible interest for the
     # current year is populated and positive.
     assert row["tax_deductible_interest"] > 0.0
+
+
+def test_rollup_property_c_is_valuation_only(rollup: pd.DataFrame) -> None:
+    """Property C is valuation-only (owned outright, PKR): euro live-position columns are blank.
+
+    Phase 11 / S2 enabled Property C (Paragon) on the valuation-only path in
+    PKR. It carries no mortgage, so the loan-driven columns are empty, and the
+    interim currency guard in tools/portfolio.py holds its PKR value out of the
+    euro ``property_value`` column so it never contaminates the euro aggregate.
+    The real PKR value lives in Property C's own valuation output. This locks
+    the interim S2 shape; S3 revisits ``property_value`` once the rollup is
+    currency-aware.
+    """
+    c_rows = rollup[rollup["property_name"] == "Property C"]
+    assert len(c_rows) == 1, "expected exactly one Property C row in the rollup"
+    row = c_rows.iloc[0]
+    # Owned outright, valuation-only: an owned-outright kind and no rental tax.
+    assert str(row["property_kind"]) == "owned_outright"
+    assert bool(row["tax_enabled"]) is False
+    # The as-of date is still a real ISO date (the valuation snapshot date).
+    assert isinstance(row["as_of_date"], str) and row["as_of_date"][:4].isdigit()
+    # Interim currency guard: the euro property_value is intentionally blank for
+    # a PKR property so it never enters the euro aggregate (the currency-aware
+    # column arrives in S3).
+    assert pd.isna(row["property_value"])
+    # No mortgage means the loan-driven position columns are empty too.
+    assert pd.isna(row["current_balance"])
+    assert pd.isna(row["ltv"])
+    assert pd.isna(row["current_annual_rate"])

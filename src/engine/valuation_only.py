@@ -45,6 +45,16 @@ written into the ``output.csv_subdir`` sub-folder (default ``csv``) rather than
 beside the workbook, matching the mortgage path. The workbook stays at the
 property root; an empty ``csv_subdir`` restores the flat layout. The figures are
 unchanged.
+
+Phase 11 / S2 note: an optional ``cost_basis_value`` (and ``cost_basis_note``) on
+the ``valuation`` block records what the property actually cost to acquire,
+purely as a reference figure. It is never read by ``property_value_on``, so a
+config that omits it produces byte-identical ``property_value`` figures to
+before. When present, it is repeated on every row of ``valuation_schedule.csv``
+as ``cost_basis_value`` and ``unrecoverable_acquisition_cost`` (cost basis minus
+the modelled base value), and the same two figures land on the workbook Summary
+sheet, so a reader of only the outputs never loses the acquisition-cost gap a
+net-realisable-value valuation basis does not recover.
 """
 
 from __future__ import annotations
@@ -53,7 +63,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import yaml
@@ -67,7 +77,6 @@ from .monthly import month_span
 # money mask; it defaults to the original euro mask for EUR.
 from .report import _add_table, _format_sheet, money_number_format
 
-
 @dataclass
 class _ValuationAnchor:
     """The minimal value inputs ``property_value_on`` needs, for a no-loan property.
@@ -77,6 +86,12 @@ class _ValuationAnchor:
     ``valuation`` block instead. This small object carries exactly those fields
     under the same attribute names the shared valuation helper reads, so the
     value-over-time maths is identical to a mortgaged property's LTV path.
+
+    Phase 11 / S2: two reference-only fields, ``cost_basis_value`` and
+    ``cost_basis_note``, carry what the property actually cost to acquire.
+    ``property_value_on`` never reads them; they exist purely so the schedule
+    and workbook can surface the acquisition-cost gap without touching the
+    growth maths.
     """
 
     # Attribute names deliberately mirror ``Inputs`` so ``property_value_on`` can
@@ -85,7 +100,9 @@ class _ValuationAnchor:
     property_growth_pa: float        # annual growth (decimal or whole percent)
     drawdown_date: date              # reused as the base-valuation date
     valuation_blocks: List[ValuationBlock] = field(default_factory=list)
-
+    # Phase 11 / S2: reference-only acquisition-cost figures (see module note).
+    cost_basis_value: Optional[float] = None   # total invested, in the property's own currency
+    cost_basis_note: str = ""                  # free-text provenance, e.g. "transfer ledger total"
 
 def _read_valuation_anchor(inputs: Inputs, raw_cfg: dict) -> _ValuationAnchor:
     """Collect the base value, growth, base date, and any revaluation blocks.
@@ -96,6 +113,10 @@ def _read_valuation_anchor(inputs: Inputs, raw_cfg: dict) -> _ValuationAnchor:
     loan-derived value already on ``Inputs`` so a mortgaged config could in
     principle reuse the same path. It fails loudly when there is no positive base
     value or no base date, because then there is nothing meaningful to grow.
+
+    Phase 11 / S2: also reads the optional ``cost_basis_value`` /
+    ``cost_basis_note`` reference figures. Absent by default, so an existing
+    config without them resolves an anchor identical to before.
     """
     val = (raw_cfg.get("valuation") or {})
 
@@ -148,13 +169,21 @@ def _read_valuation_anchor(inputs: Inputs, raw_cfg: dict) -> _ValuationAnchor:
             "block carrying property_price and drawdown_date)"
         )
 
+    # Phase 11 / S2: the acquisition-cost reference figures. A missing key stays
+    # None, so build_valuation_schedule and write_valuation_outputs both skip
+    # emitting anything for it, reproducing the pre-S2 output exactly.
+    cost_basis_raw = val.get("cost_basis_value")
+    cost_basis_value = (None if cost_basis_raw is None else float(cost_basis_raw))
+    cost_basis_note = str(val.get("cost_basis_note", "") or "")
+
     return _ValuationAnchor(
         property_price=base_value,
         property_growth_pa=growth_raw,
         drawdown_date=base_date,
         valuation_blocks=blocks,
+        cost_basis_value=cost_basis_value,
+        cost_basis_note=cost_basis_note,
     )
-
 
 def build_valuation_schedule(inputs: Inputs, anchor: _ValuationAnchor) -> pd.DataFrame:
     """Return a month-by-month property value series to the modelling horizon.
@@ -163,6 +192,15 @@ def build_valuation_schedule(inputs: Inputs, anchor: _ValuationAnchor) -> pd.Dat
     row per calendar month from the base-valuation date to the modelling end
     date, each showing the modelled property value that month. There is no
     balance and no LTV because there is no loan.
+
+    Phase 11 / S2: when the anchor carries a ``cost_basis_value``, every row also
+    repeats it alongside ``unrecoverable_acquisition_cost`` (cost basis minus the
+    modelled base value). Both are constants, not a series: the money actually
+    spent on acquisition does not change month to month, so repeating it on every
+    row (rather than only the first) means a reader of any single row, or a
+    filtered slice of the CSV, still sees the figure. When no cost basis is
+    configured neither column is added, so the schedule shape is byte-identical
+    to before.
     """
     end = inputs.modelling_end_date
     if end is None:
@@ -175,18 +213,31 @@ def build_valuation_schedule(inputs: Inputs, anchor: _ValuationAnchor) -> pd.Dat
     # One first-of-month entry from the base date to the horizon (shared helper).
     months = month_span(anchor.drawdown_date, end)
 
+    # Phase 11 / S2: pre-compute the two constant reference figures once, outside
+    # the loop, since they never vary by month.
+    has_cost_basis = anchor.cost_basis_value is not None
+    cost_basis_value = round(float(anchor.cost_basis_value), 2) if has_cost_basis else None
+    unrecoverable_cost = (
+        round(float(anchor.cost_basis_value) - float(anchor.property_price), 2)
+        if has_cost_basis
+        else None
+    )
+
     rows = []
     for ms in months:
-        rows.append(
-            dict(
-                month_start=ms,
-                ym=ms.year * 100 + ms.month,
-                # Reuse the shared valuation maths; the anchor duck-types as Inputs.
-                property_value=round(property_value_on(anchor, ms), 2),
-            )
+        row = dict(
+            month_start=ms,
+            ym=ms.year * 100 + ms.month,
+            # Reuse the shared valuation maths; the anchor duck-types as Inputs.
+            property_value=round(property_value_on(anchor, ms), 2),
         )
+        # Phase 11 / S2: additive columns, only present when a cost basis is
+        # configured, so a config without one keeps the original three columns.
+        if has_cost_basis:
+            row["cost_basis_value"] = cost_basis_value
+            row["unrecoverable_acquisition_cost"] = unrecoverable_cost
+        rows.append(row)
     return pd.DataFrame(rows)
-
 
 def write_valuation_outputs(
     out_dir: Path, schedule: pd.DataFrame, inputs: Inputs, anchor: _ValuationAnchor
@@ -208,6 +259,13 @@ def write_valuation_outputs(
 
     Phase 8 / S3: the CSV is demoted into the ``output.csv_subdir`` sub-folder
     (default ``csv``); the workbook stays at the property root.
+
+    Phase 11 / S2: when the anchor carries a ``cost_basis_value``, the Summary
+    sheet gains two extra rows, "Cost basis (invested)" and "Unrecoverable
+    acquisition cost", both money-formatted in the property's own currency. This
+    is the same figure now repeated on every schedule row; the Summary sheet
+    gives a one-look version of it. Absent a cost basis, the Summary sheet is
+    unchanged from before.
     """
     # Phase 6 / S4: honour the output knobs. write_csv and write_excel gate the
     # two artefacts; currency selects the money symbol used in the workbook.
@@ -240,10 +298,15 @@ def write_valuation_outputs(
             ws_v = xl.sheets["Valuation"]
 
             # Table + number formats reuse the shared report helpers for one look.
+            # Phase 11 / S2: money_cols grows by two when the schedule carries the
+            # cost-basis columns, so those columns get the same money mask.
+            money_cols = ["property_value"]
+            if "cost_basis_value" in schedule.columns:
+                money_cols += ["cost_basis_value", "unrecoverable_acquisition_cost"]
             _add_table(ws_v, "Valuation")
             _format_sheet(
                 ws_v,
-                money_cols=["property_value"],
+                money_cols=money_cols,
                 date_cols=["month_start"],
                 money_format=money_fmt,
             )
@@ -267,13 +330,28 @@ def write_valuation_outputs(
                 ("Months modelled", int(len(schedule))),
                 ("LTV", "n/a (no mortgage)"),
             ]
+            # Phase 11 / S2: the two acquisition-cost rows land right after "Base
+            # value" so a reader sees the modelled basis and the real cost
+            # together, before the horizon figures. Only added when configured.
+            if anchor.cost_basis_value is not None:
+                base_value_idx = next(i for i, (k, _v) in enumerate(rows) if k == "Base value")
+                unrecoverable = float(anchor.cost_basis_value) - float(anchor.property_price)
+                rows[base_value_idx + 1 : base_value_idx + 1] = [
+                    ("Cost basis (invested)", float(anchor.cost_basis_value)),
+                    ("Unrecoverable acquisition cost", unrecoverable),
+                ]
             for k, v in rows:
                 ws_s.append([k, v])
 
             ws_s.freeze_panes = "A2"
             ws_s["A1"].font = Font(bold=True)
             ws_s["B1"].font = Font(bold=True)
-            money_keys = {"Base value", "Value at base date", "Value at horizon"}
+            # Phase 11 / S2: the two new rows are money-formatted the same as
+            # Base value; their key names are added to money_keys only.
+            money_keys = {
+                "Base value", "Value at base date", "Value at horizon",
+                "Cost basis (invested)", "Unrecoverable acquisition cost",
+            }
             pct_keys = {"Annual growth"}
             date_keys = {"Base valuation date", "Modelling end date"}
             for r in range(2, ws_s.max_row + 1):
@@ -295,7 +373,6 @@ def write_valuation_outputs(
             wb._sheets = [wb[t] for t in lead if t in wb.sheetnames] + [
                 ws for ws in wb._sheets if ws.title not in lead
             ]
-
 
 def run_valuation_only(inputs: Inputs, inputs_path: Path, out_dir: Path) -> pd.DataFrame:
     """Run the no-mortgage valuation-only path and write its outputs.
@@ -322,6 +399,5 @@ def run_valuation_only(inputs: Inputs, inputs_path: Path, out_dir: Path) -> pd.D
     # Plain-English completion line for troubleshooting (stderr only).
     print("[engine.valuation_only] valuation-only run complete", file=sys.stderr)
     return schedule
-
 
 print("[engine.valuation_only] no-mortgage valuation-only path ready", file=sys.stderr)
