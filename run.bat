@@ -12,6 +12,11 @@ call ".venv\Scripts\activate.bat"
 REM Install dependencies before resolving config (the resolver imports src.paths).
 pip install -r requirements.txt || goto :err
 
+REM Clear stale environment overrides so Explorer-launched runs use the
+REM machine-local paths.yaml config rather than an old OneDrive path.
+set "MORTGAGE_DATA_DIR="
+set "MORTGAGE_OUT_DIR="
+
 REM --- Resolve data and output folders from the Phase 2 config layer ---
 REM DATA_DIR / OUT_DIR honour CLI > env > paths.local.yaml > repo defaults.
 for /f "delims=" %%i in ('python tools\_resolve.py data') do set "DATA_DIR=%%i"
