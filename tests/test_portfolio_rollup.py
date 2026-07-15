@@ -11,13 +11,18 @@ attribution health (total Difference and the count of mismatch months), the
 current-year interest, the projected payoff date, and the Section 97
 tax-deductible interest when rental tax is on. This test runs the real pipeline
 against the bundled sample portfolio and checks that the rollup carries exactly
-the locked columns, in order, and that the single sample row is genuinely
-populated and sane, so a silently dropped column fails loudly.
+the locked columns, in order, and that each enabled row is genuinely populated
+and sane, so a silently dropped column fails loudly.
 
 Phase 8 / S5: the rollup gains an explicit ``as_of_date`` first column so the
 snapshot date the whole row is taken at is visible. The locked column list below
 moves from 15 to 16 columns, and the populated-row check also confirms the
 as-of date reads as an ISO date.
+
+Phase 11 / S1: Property B is now enabled in the sample portfolio, so the rollup
+carries two rows (Property A and Property B). The row-count check expects both
+enabled rows, and the populated-and-sane check selects the Property A row by
+name (not by position) so it stays correct regardless of row order.
 
 Technical summary
 -----------------
@@ -38,7 +43,6 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 
 # The locked final column order for the rebuilt rollup (Phase 8 / S4, extended in
 # S5). This is the contract the runner writes and the order a reviewer reads left
@@ -72,6 +76,7 @@ def _find_repo_root(start: Path) -> Path:
 REPO_ROOT = _find_repo_root(Path(__file__).resolve().parent)
 DATA_SAMPLE = REPO_ROOT / "data_sample"
 SAMPLE_PORTFOLIO = DATA_SAMPLE / "portfolio.yaml"
+
 # Phase 8 / S3: the rollup CSV lives under a top-level csv/ subfolder.
 CSV_SUBDIR = "csv"
 
@@ -123,10 +128,16 @@ def test_rollup_columns_locked(rollup: pd.DataFrame) -> None:
     )
 
 
-def test_rollup_single_sample_row(rollup: pd.DataFrame) -> None:
-    """Only Property A is enabled in the sample portfolio, so there is one row."""
-    assert len(rollup) == 1, f"expected exactly one rollup row, got {len(rollup)}"
-    assert rollup.iloc[0]["property_name"] == "Property A"
+def test_rollup_has_both_enabled_rows(rollup: pd.DataFrame) -> None:
+    """Property A and Property B are both enabled, so the rollup has two rows.
+
+    Phase 11 / S1 enabled Property B in the sample portfolio (previously the only
+    disabled property), so the rollup now carries exactly two rows. The check is
+    on the set of property names rather than their order, because the row order
+    is an implementation detail of the runner.
+    """
+    assert len(rollup) == 2, f"expected exactly two rollup rows, got {len(rollup)}"
+    assert set(rollup["property_name"]) == {"Property A", "Property B"}
 
 
 def test_rollup_row_is_populated_and_sane(rollup: pd.DataFrame) -> None:
@@ -137,45 +148,42 @@ def test_rollup_row_is_populated_and_sane(rollup: pd.DataFrame) -> None:
     re-baseline would move), this asserts each figure is present and plausible,
     plus the one fully deterministic value: the as-of date falls inside the first
     fixed-rate window, so the current annual rate must be 3.65%.
-    """
-    row = rollup.iloc[0]
 
+    Phase 11 / S1: with Property B now in the rollup, the Property A row is
+    selected explicitly by name so this check no longer depends on row order.
+    """
+    # Select the Property A row by name (Property B is also present from S1).
+    a_rows = rollup[rollup["property_name"] == "Property A"]
+    assert len(a_rows) == 1, "expected exactly one Property A row in the rollup"
+    row = a_rows.iloc[0]
     # Phase 8 / S5: the as-of date is now an explicit first column. For Property A
     # it is the deterministic mid-2026 snapshot date, so it reads as an ISO date
     # string (yyyy-mm-dd).
     assert isinstance(row["as_of_date"], str) and row["as_of_date"][:4].isdigit()
-
     # Rental tax is on for Property A.
     assert bool(row["tax_enabled"]) is True
-
     # Live position: a real outstanding balance against a real property value,
     # giving a loan-to-value strictly between 0 and 1.
     assert row["current_balance"] > 0.0
     assert row["property_value"] > 0.0
     assert 0.0 < row["ltv"] < 1.0
     assert row["current_balance"] < row["property_value"]
-
     # The as-of date (mid-2026) sits inside the first fixed-rate block (months 1
     # to 48 at 3.65%), so the current rate is deterministic.
     assert math.isclose(row["current_annual_rate"], 0.0365, abs_tol=1e-9)
-
     # Contractual instalment and overpayment are present and non-negative.
     assert row["contractual_payment"] > 0.0
     assert row["current_overpayment"] >= 0.0
     assert row["total_overpaid_to_date"] >= 0.0
-
     # Attribution health: a finite Difference and a non-negative whole-number
     # count of mismatch months.
     assert math.isfinite(row["total_difference"])
     assert row["overpayment_mismatch_months"] >= 0
     assert float(row["overpayment_mismatch_months"]).is_integer()
-
     # Projected payoff date is present and reads as an ISO date.
     assert isinstance(row["payoff_date"], str) and row["payoff_date"][:4].isdigit()
-
     # Current-year interest is a real positive figure.
     assert row["current_year_interest"] > 0.0
-
     # Property A has rental tax on, so the Section 97 deductible interest for the
     # current year is populated and positive.
     assert row["tax_deductible_interest"] > 0.0

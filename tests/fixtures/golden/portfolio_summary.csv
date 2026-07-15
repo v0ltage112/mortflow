@@ -1,2 +1,3 @@
 as_of_date,property_name,property_kind,tax_enabled,current_balance,property_value,ltv,current_annual_rate,contractual_payment,current_overpayment,total_overpaid_to_date,total_difference,overpayment_mismatch_months,payoff_date,current_year_interest,tax_deductible_interest
 2026-06-15,Property A,investment,True,484518.98,587822.8242969483,0.8242602362021202,0.0365,2123.44,200.0,2400.0,-1648.11,0,2055-04-05,17631.14,17631.14
+2025-12-31,Property B,primary,False,345978.79,518967.8827472167,0.6666670549408975,0.019,1218.82,119.0,714.0,0.0,0,,6664.7699999999995,

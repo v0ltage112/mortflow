@@ -1,26 +1,30 @@
 """Golden-master regression test for the mortflow cashflow engine.
 
 This test pins the engine's current numeric behaviour. It regenerates every
-locked output from the bundled ``data_sample/`` data into a throwaway temp
+locked output from the bundled `data_sample/` data into a throwaway temp
 directory, then asserts each file matches a committed fixture to two decimal
 places (CSV) or byte-for-byte (the effective-inputs YAML).
 
-The point is refactor-safety: Phase 5 may restructure ``src/engine.py`` freely,
+The point is refactor-safety: a refactor may restructure `src/engine.py` freely,
 and this test fails loudly the moment any number moves beyond half a cent.
 
-Fixtures live in ``tests/fixtures/golden/`` and were captured from a run Ali
-verified against the bank on real Property A data, then locked from the
-de-identified sample that reproduces the same figures.
+Fixtures live in `tests/fixtures/golden/` and were captured from runs verified
+against the bank on real data, then locked from the de-identified samples that
+reproduce the same figures.
 
-Phase 8 / S3 note: the engine now writes every CSV into a ``csv/`` sub-folder
-(per-property ``<slug>/csv/`` and a top-level ``csv/`` for the rollup), so the
-produced files this test reads live one level deeper than before. The committed
-fixtures are intentionally left at their existing locations: a fixture is just
-the locked expected value, and its on-disk path is independent of the runtime
-output layout. Because the CSV contents are byte-identical (S3 moved paths only,
-not numbers), the suite stays green without re-capturing anything. Any fixture
-re-baseline is deferred to S5. The effective-inputs YAML stays at the property
-root and its test is unchanged.
+Phase 8 / S3 note: the engine writes every CSV into a `csv/` sub-folder
+(per-property `<slug>/csv/` and a top-level `csv/` for the rollup), so the
+produced files this test reads live one level deeper than the committed
+fixtures. A fixture is just the locked expected value; its on-disk path is
+independent of the runtime output layout, and the values are byte-identical, so
+the suite stays green without moving the fixtures.
+
+Phase 11 / S1 note: the golden master now locks more than one property. Property
+A (investment, tax on) emits the Form 11 tax sheets; Property B (primary
+residence, tax off) does not. Each scope therefore carries its own locked file
+list, and the per-property CSV and effective-inputs tests are parametrised over
+every locked scope. Enabling Property B also changes the portfolio rollup, so
+`portfolio_summary.csv` is re-baselined alongside the new `property-b` fixtures.
 """
 from __future__ import annotations
 
@@ -32,13 +36,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+
 def _find_repo_root(start: Path) -> Path:
     """Return the repo root by walking up from this file.
 
-    The repo root is the first ancestor that contains both the ``tools``
-    package and the ``data_sample`` directory, so the test resolves correctly
+    The repo root is the first ancestor that contains both the `tools`
+    package and the `data_sample` directory, so the test resolves correctly
     no matter how deep under the repo the file is placed (a stray
-    ``tests/tests/`` nesting, for example, still works).
+    `tests/tests/` nesting, for example, still works).
     """
     # Check this file's own directory first, then each parent in turn.
     for candidate in (start, *start.parents):
@@ -59,29 +64,41 @@ GOLDEN_DIR = REPO_ROOT / "tests" / "fixtures" / "golden"
 # Bundled sample portfolio that the pipeline runs against.
 SAMPLE_PORTFOLIO = REPO_ROOT / "data_sample" / "portfolio.yaml"
 
-# Per-property CSVs to lock, relative to the property output sub-folder.
-# Only Property A is enabled in the sample portfolio, so it is the only scope.
-PROPERTY_SCOPE = "property-a"
-# Phase 8 / S3: the engine now writes every CSV into this sub-folder, both under
-# each property folder and at the output root for the rollup. The produced files
-# therefore sit at <scope>/csv/<name>; the committed fixtures stay at their
-# existing <scope>/<name> locations (their layout is independent of the runtime
-# output layout, and the values are byte-identical, so the suite stays green
-# without re-capturing them). S5 owns any fixture re-baseline.
+# Phase 8 / S3: the engine writes every CSV into this sub-folder, both under each
+# property folder and at the output root for the rollup. Produced files sit at
+# <scope>/csv/<name>; the committed fixtures stay at <scope>/<name>.
 CSV_SUBDIR = "csv"
-PROPERTY_CSV_FILES = [
+
+# Phase 11 / S1: per-scope locked file lists. Property A is an investment with
+# tax on, so it emits the Form 11 tax sheets; Property B is a primary residence
+# with tax off, so it does not. The common set is everything both emit.
+COMMON_PROPERTY_CSV_FILES = [
     "baseline_monthly.csv",
     "baseline_reconcile.csv",
     "baseline_events_daily.csv",
     "schedule_monthly.csv",
     "reconcile.csv",
     "events_daily.csv",
+]
+# Extra CSVs only a tax-on property emits (the Form 11 reporting sheets).
+TAX_CSV_FILES = [
     "tax_year.csv",
     "tax_audit.csv",
 ]
-# Portfolio-level CSV written at the output root.
+# Locked CSVs per property scope. Add a scope here to pin another property.
+PROPERTY_CSV_FILES = {
+    "property-a": COMMON_PROPERTY_CSV_FILES + TAX_CSV_FILES,
+    "property-b": COMMON_PROPERTY_CSV_FILES,
+}
+# Flattened (scope, filename) pairs so each file is an independent test case.
+PROPERTY_CSV_CASES = [
+    (scope, name)
+    for scope, names in PROPERTY_CSV_FILES.items()
+    for name in names
+]
+# Portfolio-level CSV written at the output root (aggregates every enabled property).
 ROOT_CSV_FILES = ["portfolio_summary.csv"]
-# Effective-inputs snapshot is locked byte-for-byte, not at 2dp.
+# Effective-inputs snapshot is locked byte-for-byte (not at 2dp), one per scope.
 YAML_FILE = "baseline.effective.inputs.yaml"
 
 # Half a cent: two monetary values that agree to 2dp never differ by more.
@@ -89,10 +106,10 @@ MONEY_ATOL = 0.005
 
 
 def _run_pipeline(out_dir: Path) -> None:
-    """Regenerate every sample output into ``out_dir`` via the real CLIs.
+    """Regenerate every sample output into `out_dir` via the real CLIs.
 
-    Mirrors ``run_sample.bat`` exactly: baseline first, then portfolio, both
-    pointed at the bundled ``data_sample`` portfolio and the temp out dir.
+    Mirrors `run_sample.bat` exactly: baseline first, then portfolio, both
+    pointed at the bundled `data_sample` portfolio and the temp out dir.
     """
     # Force data + out locations through env so the run never depends on a
     # developer's paths.local.yaml. The explicit --out below still wins.
@@ -153,13 +170,12 @@ def _assert_csv_matches(actual_path: Path, expected_path: Path) -> None:
     match exactly. On any difference this raises an AssertionError whose message
     is written for a non-developer: it names the file, says how many cells moved,
     and points to the single worst change with its row, column, both values and
-    the gap in euros. The first line is a one-sentence summary, so it also reads
-    well in pytest's short summary panel.
+    the gap in euros.
     """
     # A missing file on either side is a setup problem, not a silent pass.
     assert expected_path.exists(), (
         f"{expected_path.name}: no locked fixture found at {expected_path}. "
-        "Re-capture the fixtures (Step 5) before running the test."
+        "Re-capture the fixtures before running the test."
     )
     assert actual_path.exists(), (
         f"{actual_path.name}: the pipeline did not produce this file at "
@@ -199,10 +215,9 @@ def _assert_csv_matches(actual_path: Path, expected_path: Path) -> None:
     for column in expected.columns:
         exp_col = expected[column]
         act_col = actual[column]
-        # Treat a column as numeric only when both sides are a numeric dtype
-        # AND neither side is boolean. Pandas reports true/false columns as
-        # numeric, but subtracting them raises a TypeError, so booleans are
-        # routed to the exact-match branch below instead.
+        # Treat a column as numeric only when both sides are numeric AND neither
+        # side is boolean. Pandas reports true/false columns as numeric, but
+        # subtracting them raises a TypeError, so booleans go to exact-match.
         numeric = (
             pd.api.types.is_numeric_dtype(exp_col)
             and pd.api.types.is_numeric_dtype(act_col)
@@ -272,20 +287,23 @@ def _assert_csv_matches(actual_path: Path, expected_path: Path) -> None:
         raise AssertionError(headline + ".\n" + "\n".join(differences))
 
 
-@pytest.mark.parametrize("rel_name", PROPERTY_CSV_FILES)
-def test_property_csv_locked(generated_out: Path, rel_name: str) -> None:
+@pytest.mark.parametrize("scope, rel_name", PROPERTY_CSV_CASES)
+def test_property_csv_locked(generated_out: Path, scope: str, rel_name: str) -> None:
     """Each per-property CSV matches its committed fixture to 2dp.
 
-    Phase 8 / S3: the produced CSV now lives under the property's csv/ sub-folder
+    Phase 8 / S3: the produced CSV lives under the property's csv/ sub-folder
     (CSV_SUBDIR), while the committed fixture stays at its existing
-    <scope>/<name> location. The values are byte-identical, so this asymmetry is
+    <scope>/<name> location. The values are byte-identical, so the asymmetry is
     intentional and the assertion still passes.
+
+    Phase 11 / S1: parametrised over every locked (scope, file) pair, so Property
+    B is pinned alongside Property A. Property B omits the tax sheets (tax off).
     """
     _assert_csv_matches(
-        # Produced side: now one level deeper, under the property's csv/ folder.
-        generated_out / PROPERTY_SCOPE / CSV_SUBDIR / rel_name,
+        # Produced side: one level deeper, under the property's csv/ folder.
+        generated_out / scope / CSV_SUBDIR / rel_name,
         # Expected side: committed fixture, unchanged location and values.
-        GOLDEN_DIR / PROPERTY_SCOPE / rel_name,
+        GOLDEN_DIR / scope / rel_name,
     )
 
 
@@ -293,33 +311,33 @@ def test_property_csv_locked(generated_out: Path, rel_name: str) -> None:
 def test_root_csv_locked(generated_out: Path, rel_name: str) -> None:
     """The portfolio-level CSV matches its fixture to 2dp.
 
-    out_dir is locked as the relative slug "property-a" (see the relative
-    out_dir change in tools/portfolio.py), so this assertion is machine
-    independent.
+    Phase 8 / S3: the produced rollup lives under the top-level csv/ sub-folder;
+    the committed fixture stays at the golden root.
 
-    Phase 8 / S3: the produced rollup now lives under the top-level csv/
-    sub-folder; the committed fixture stays at the golden root.
+    Phase 11 / S1: the rollup now aggregates Property A and Property B, so this
+    fixture was re-baselined when B was enabled.
     """
     _assert_csv_matches(
-        # Produced side: now under the top-level csv/ folder.
+        # Produced side: under the top-level csv/ folder.
         generated_out / CSV_SUBDIR / rel_name,
-        # Expected side: committed fixture at the golden root, unchanged.
+        # Expected side: committed fixture at the golden root.
         GOLDEN_DIR / rel_name,
     )
 
 
-def test_effective_inputs_yaml_byte_equal(generated_out: Path) -> None:
-    """The baseline effective-inputs snapshot is locked byte-for-byte.
+@pytest.mark.parametrize("scope", sorted(PROPERTY_CSV_FILES))
+def test_effective_inputs_yaml_byte_equal(generated_out: Path, scope: str) -> None:
+    """The baseline effective-inputs snapshot is locked byte-for-byte, per scope.
 
     This file is a YAML re-dump of the resolved inputs, not computed numbers,
     so it must reproduce exactly. Newlines are normalised so a CRLF/LF flip
     between machines does not cause a false failure.
 
-    Phase 8 / S3: the YAML snapshot stays at the property root (it is not a CSV),
-    so both the produced path and the fixture path are unchanged here.
+    Phase 11 / S1: parametrised per scope so Property B's resolved inputs are
+    locked alongside Property A's.
     """
-    actual_path = generated_out / PROPERTY_SCOPE / YAML_FILE
-    expected_path = GOLDEN_DIR / PROPERTY_SCOPE / YAML_FILE
+    actual_path = generated_out / scope / YAML_FILE
+    expected_path = GOLDEN_DIR / scope / YAML_FILE
     assert expected_path.exists(), f"Missing golden fixture: {expected_path}"
     assert actual_path.exists(), f"Pipeline did not produce: {actual_path}"
     # Universal-newline normalisation keeps the compare content-exact.
@@ -347,6 +365,6 @@ def test_effective_inputs_yaml_byte_equal(generated_out: Path) -> None:
                 f"{len(actual_lines)} produced)"
             )
         raise AssertionError(
-            f"{YAML_FILE}: the resolved-inputs snapshot changed from the locked "
-            f"version. First difference at {location}"
+            f"{YAML_FILE} ({scope}): the resolved-inputs snapshot changed from "
+            f"the locked version. First difference at {location}"
         )

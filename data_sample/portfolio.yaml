@@ -24,7 +24,7 @@ properties:
     property_kind: primary
     inputs: property_b/inputs.sample.yaml
     actuals: property_b/actuals.sample.csv
-    enabled: false                    # committed sample stays Property A only so the golden master stays green; enable locally with real data
+    enabled: true                     # Phase 11 / S1: activated on the contracts-schema sample twin; property-b golden + portfolio_summary re-baselined
     out_dir: property-b
     tax_enabled: false
 

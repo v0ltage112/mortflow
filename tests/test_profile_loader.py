@@ -7,16 +7,21 @@ anchor), the sample-vs-local fallback behaves, and the legacy inputs still parse
 with no contracts and no profile so the refactor stays byte-identical. See
 docs/lender_profile.md.
 
-Phase 10 / S2 note: test_legacy_inputs_parse_additively_no_contracts now uses
-Property B (still legacy) because Property A was converted to the contracts
-schema in S2. Property B is the canonical legacy reference until S5/S6.
+Phase 10 / S2 note: test_legacy_inputs_parse_additively_no_contracts originally
+used Property B as the still-legacy reference after Property A was converted to
+the contracts schema in S2.
+
+Phase 11 / S1 note: Property B has now been migrated to the contracts schema and
+enabled in the sample portfolio, so it is no longer a legacy specimen. The
+byte-identical legacy guarantee is now pinned against a dedicated frozen fixture,
+tests/fixtures/legacy/inputs.no_contracts.yaml, which must stay legacy (no
+contracts, no lender) until the legacy path is retired at S5/S6.
 
 Phase 10 / S3 note: test_inputs_is_frozen_and_copy_clones no longer asserts on
 the retired scalar overpayment_cap_pct (removed from Inputs this session). It now
 exercises the same frozen/copy/clone contract via merge_extra_mode and
 reconcile_ok_abs_eur, so the immutability guarantee is still locked.
 """
-
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
@@ -33,12 +38,16 @@ from src.engine.profile import (
 )
 from src.engine.schema import load_inputs
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LENDERS_DIR = REPO_ROOT / "data_sample" / "lenders"
 SAMPLE_PROFILE = LENDERS_DIR / "sample_lender.yaml"
 PROPERTY_A = REPO_ROOT / "data_sample" / "property_a" / "inputs.sample.yaml"
-PROPERTY_B = REPO_ROOT / "data_sample" / "property_b" / "inputs.sample.yaml"
+# Phase 11 / S1: Property B was migrated to the contracts schema, so the
+# byte-identical legacy guarantee now runs against a dedicated frozen fixture
+# instead of a live sample property.
+LEGACY_NO_CONTRACTS = (
+    REPO_ROOT / "tests" / "fixtures" / "legacy" / "inputs.no_contracts.yaml"
+)
 
 
 def test_sample_profile_loads_and_parses():
@@ -140,14 +149,16 @@ def test_profile_with_no_versions_rejected():
 
 
 def test_legacy_inputs_parse_additively_no_contracts():
-    """A legacy sample (Property B) parses with no contracts and no profile.
+    """A dedicated legacy fixture parses with no contracts and no profile.
 
     This is the byte-identical guarantee for S1: a file with no ``contracts:``
     key and no ``lender`` leaves the new fields empty, so nothing the engine
-    reads changes. Property B is used here because Property A was converted to
-    the contracts schema in P10/S2; B remains legacy until S5/S6.
+    reads changes. It uses tests/fixtures/legacy/inputs.no_contracts.yaml, a
+    frozen synthetic legacy specimen, because both sample properties (Property A
+    in P10/S2 and Property B in P11/S1) have since been migrated to the contracts
+    schema. The fixture must stay legacy until the legacy path is retired (S5/S6).
     """
-    inputs = load_inputs(PROPERTY_B)
+    inputs = load_inputs(LEGACY_NO_CONTRACTS)
     assert inputs.contracts == []
     assert inputs.lender is None
     assert inputs.loan_v2 is None
