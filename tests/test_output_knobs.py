@@ -7,6 +7,7 @@ These tests pin two promises made in S4:
    CSVs, include the daily events) toggles its artefact, the currency knob picks
    the money symbol, and the defaults reproduce the pre-S4 behaviour exactly so
    an unchanged config writes an unchanged set of files.
+
 2. ``bank.payment_holidays`` is parsed and validated but not applied. The
    records load and are checked for a sane window and a known mode; activation
    is deferred to a later phase so the golden master does not move.
@@ -17,8 +18,21 @@ writer path end to end, mirroring how the golden-master test invokes the engine.
 Phase 8 / S3 note: the CSVs now land under a ``csv/`` subfolder (the
 ``output.csv_subdir`` knob, default ``csv``), so the CLI gating test looks for
 them there; only the workbook stays at the output root.
-"""
 
+Phase 11 / S2 note: the payment-holiday parse check is now property-agnostic so
+it passes on every enabled property, real and sample. The behavioural suite
+parametrises the ``inputs_path`` fixture across all enabled properties, and only
+some of them carry a payment holiday (the Gandon sample does; the Somerton
+residence does not). The earlier check hardcoded exactly one holiday on fixed
+dates, which failed on any property with none. The parse-and-defer contract it
+guards is itself property-agnostic: ``load_inputs`` reads and validates each
+holiday but does not apply it to the schedule. So the check now skips when a
+property declares no holidays and otherwise asserts that each parsed holiday
+exposes a sane window and a non-empty mode, rather than pinning one property's
+exact dates. The exact Gandon window (2024-03-26 to 2024-07-31, interest_only)
+stays pinned by the golden-master and characterization suites that run that
+property specifically.
+"""
 from __future__ import annotations
 
 import os
@@ -59,7 +73,6 @@ def test_output_defaults_reproduce_today(inputs_path, tmp_path):
     raw = _load_raw(inputs_path)
     raw.pop("output", None)  # remove the block entirely to test the defaults
     tmp = _write_tmp_inputs(raw, tmp_path)
-
     out = load_inputs(tmp).output
     assert out.write_excel is True
     assert out.write_csv is True
@@ -79,7 +92,6 @@ def test_output_block_is_honoured(inputs_path, tmp_path):
         "locale": "en_GB",
     }
     tmp = _write_tmp_inputs(raw, tmp_path)
-
     out = load_inputs(tmp).output
     assert out.write_excel is False
     assert out.write_csv is False
@@ -89,19 +101,37 @@ def test_output_block_is_honoured(inputs_path, tmp_path):
 
 
 def test_payment_holidays_parsed_and_validated(inputs_path, tmp_path):
-    """The Gandon sample carries one holiday; it parses with the right fields.
+    """Any payment holidays a property declares parse into sane records.
 
-    The block is read and validated but not applied to the schedule (S4 is
-    parse-and-defer), so this only asserts the parse, not any change in figures.
+    Phase 11 / S2: this replaces the earlier Gandon-specific check that asserted
+    exactly one holiday on fixed dates. The behavioural suite now runs every
+    enabled property (real and sample), and only some carry a payment holiday,
+    so a hard ``len == 1`` failed on a property like the Somerton residence that
+    has none. The parse-and-defer contract this test guards is property-agnostic:
+    ``load_inputs`` reads and validates each holiday but does not apply it to the
+    schedule. So when a property declares no holidays there is nothing to parse
+    and the check skips; otherwise every parsed holiday must expose a sane window
+    (a date start on or before a date end) and a non-empty mode string. The
+    loader already rejects unknown modes and reversed windows (see
+    test_bad_payment_holiday_mode_raises and
+    test_payment_holiday_reversed_window_raises), and the exact Gandon window
+    stays pinned by the golden-master suite.
     """
-    raw = _load_raw(inputs_path)
+    raw = _load_raw(inputs_path)  # read the property's real YAML unchanged
     holidays = load_inputs(_write_tmp_inputs(raw, tmp_path)).payment_holidays
-    assert len(holidays) == 1
-    ph = holidays[0]
-    assert ph.start == date(2024, 3, 26)
-    assert ph.end == date(2024, 7, 31)
-    assert ph.mode == "interest_only"
-    assert ph.capitalise is True
+    # A property with no configured holiday has nothing to parse here, so the
+    # parse-and-defer contract is vacuously satisfied; skip rather than fail.
+    if not holidays:
+        pytest.skip("Property declares no payment holidays; nothing to parse.")
+    # Every declared holiday must parse into a record with a sane window and a
+    # known mode. Assert the shape, not one property's exact dates, so this holds
+    # for whichever property carries a holiday.
+    for ph in holidays:
+        assert isinstance(ph.start, date), "holiday start did not parse to a date"
+        assert isinstance(ph.end, date), "holiday end did not parse to a date"
+        assert ph.start <= ph.end, f"holiday window is reversed: {ph.start} > {ph.end}"
+        assert isinstance(ph.mode, str) and ph.mode, "holiday mode is not a non-empty string"
+        assert isinstance(ph.capitalise, bool), "holiday capitalise flag is not boolean"
 
 
 def test_bad_payment_holiday_mode_raises(inputs_path, tmp_path):
@@ -159,7 +189,6 @@ def test_cli_gates_excel_and_events(inputs_path, actuals_path, tmp_path):
     tax = raw.setdefault("tax", {})
     tax["enabled"] = False
     tmp_inputs = _write_tmp_inputs(raw, tmp_path)
-
     out_dir = tmp_path / "out"
     env = dict(os.environ)
     # Force UTF-8 stdio so the child's status prints encode on every platform,
@@ -177,7 +206,6 @@ def test_cli_gates_excel_and_events(inputs_path, actuals_path, tmp_path):
         env=env,
         check=True,
     )
-
     # Phase 8 / S3: CSVs now land under the csv/ subfolder (output.csv_subdir,
     # default "csv"); only the workbook would sit at the property root.
     csv_dir = out_dir / "csv"

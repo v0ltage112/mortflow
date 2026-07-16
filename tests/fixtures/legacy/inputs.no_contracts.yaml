@@ -1,0 +1,67 @@
+# tests/fixtures/legacy/inputs.no_contracts.yaml
+#
+# Frozen legacy specimen for
+# test_profile_loader.test_legacy_inputs_parse_additively_no_contracts.
+#
+# Purpose: prove the Phase 10 additive loader still parses a pre-contracts file
+# that has NO 'contracts:' block and NO 'lender:' key, leaving every new field
+# empty (contracts == [], lender, loan_v2, profile all None).
+#
+# This file must stay in the legacy month-number rate_blocks shape. DO NOT
+# migrate it to the contracts schema: it is the last remaining legacy specimen
+# after Property A (P10/S2) and Property B (P11/S1) were both migrated, and it
+# guards the byte-identical guarantee until the legacy path is retired (S5/S6).
+#
+# Fully synthetic: no real balances, dates, addresses, or tenancy data.
+
+meta:
+  property_id: legacy-fixture
+  name: "Legacy Fixture (synthetic)"
+  kind: primary                    # owner-occupied shape: tax off, no tenancy file
+
+loan:
+  property_price: 400000           # legacy field (pre-contracts); LTV base
+  principal_at_drawdown: 360000    # net advance on drawdown day
+  drawdown_date: 2020-01-15        # loan start date (value date)
+  total_term_months: 360           # original contractual term
+  first_payment_date: 2020-03-01   # first bank debit
+  known_first_payment: 1500.00     # contractual PMT excluding standing extras
+  repayment_day_default: 1         # used only when no bank payment exists for a month
+  property_growth_pa: 0.02         # simple growth path for LTV
+  overpayment_cap_pct: 0.10        # 10% of opening balance per calendar year
+
+# Legacy month-number rate path (1 = drawdown month). This is the pre-contracts
+# shape the additive loader must still accept unchanged.
+rate_blocks:
+  - { start_month: 1,  end_month: 60,  annual_rate: 0.0300, kind: fixed }
+  - { start_month: 61, end_month: 999, annual_rate: 0.0400, kind: variable }
+
+strategy_at_refix: RecalculatePayment   # recompute PMT at each new block
+
+overpay_rules: []   # no standing extras
+lump_sums: []       # no one-off reductions
+
+bank:
+  day_count: ACT/365                        # engine uses /365
+  rounding_decimals: 2                      # post interest rounded to 2 decimals
+  merge_standing_extra_into_payment: true   # auto|true|false
+  interest_posting_rule: actual_or_eom      # actual date when provided, else EOM
+
+reconcile:
+  ok_abs_eur: 300.00   # rows OK if |model - bank| <= EUR 300
+  snapshots: []        # no bank feed in this fixture
+
+output:
+  write_excel: false   # fixture never writes a workbook
+  write_csv: true
+  include_daily_events: false
+  currency: EUR
+  locale: en_IE
+
+modelling:
+  end_date: 2050-01-15   # horizon well past the term
+  day_count: ACT/365     # informational; engine uses /365
+
+tax:
+  enabled: false
+  jurisdiction: IE

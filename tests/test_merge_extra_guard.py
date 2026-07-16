@@ -1,3 +1,4 @@
+# tests/test_merge_extra_guard.py
 """Regression tests for the "merge recurring extras" feature flag.
 
 Background
@@ -6,20 +7,41 @@ Phase 2 of the engine introduced the ability to merge standing order overpayment
 into the regular payment when an actual bank payment already exists for that
 month.  These tests lock that behaviour so refactors cannot silently reintroduce
 duplicate "Extra" entries or lose projected extras when actuals are missing.
-"""
 
+Phase 11 / S2 note
+------------------
+Property A converted to the date-based contracts schema in Phase 10 / S2, and
+every real residence (Property B / Somerton, Property C / Paragon) uses that
+schema natively. A contracts-based property's recurring standing overpayment is
+read from each contract's own ``standing_overpayment`` window; ``month_tables``
+in ``src/engine/monthly.py`` reads the legacy ``overpay_rules`` only when a
+property carries no contracts at all. These guards used to probe the merge flag
+by setting only ``overpay_rules``, which silently stopped reaching Property A
+the moment it converted. The guard kept "passing" only because Property A's
+real contract-level standing overpayment happens to also be EUR 200 from month
+17, so the hardcoded expectation matched the property's own real figure by
+coincidence rather than the injection actually taking effect. That went
+unnoticed until Somerton, whose real standing overpayment is EUR 140, entered
+the behavioural matrix in Phase 11 / S2 and exposed the EUR 60 gap. The three
+tests below now build their probe scenario through
+``_probe_overpayment_inputs``, which injects the amount through whichever
+mechanism the property's own schema actually reads, so the guard exercises the
+merge flag for real on every enabled property, sample or real, contracts-based
+or legacy.
+"""
 from datetime import date
 from dataclasses import replace
+from typing import Optional
 
 import pandas as pd
 
 from src.engine import month_index, run_engine
+from src.engine.schema import StandingOverpayment
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 def _make_actuals_row(pay_date: date, amount: float) -> pd.DataFrame:
     """Build a one-row actuals frame that mimics a bank export.
 
@@ -30,37 +52,91 @@ def _make_actuals_row(pay_date: date, amount: float) -> pd.DataFrame:
     the engine sees exactly what it would in production (title-cased types and
     the derived `ym` column used for grouping).
     """
-
-    df = pd.DataFrame([
-        {"date": pay_date, "type": "Payment", "amount": -abs(amount), "run_balance": None}
-    ])
+    df = pd.DataFrame(
+        [{"date": pay_date, "type": "Payment", "amount": -abs(amount), "run_balance": None}]
+    )
     df["type"] = df["type"].astype(str).str.strip().str.title()
     df["ym"] = df["date"].apply(lambda d: d.year * 100 + d.month)
     return df
 
 
+def _probe_overpayment_inputs(
+    inputs, amount: float, window_start: date, window_end: Optional[date] = None
+):
+    """Return ``inputs`` with a single probe standing overpayment, schema-aware.
+
+    Why we care
+    -----------
+    ``month_tables`` (src/engine/monthly.py) reads the recurring overpayment
+    from two different places depending on the property's schema: a
+    contracts-based property sums each contract's own ``standing_overpayment``
+    window and ignores ``overpay_rules`` entirely; a still-legacy property (no
+    ``contracts``) reads ``overpay_rules``. To probe the merge flag on any
+    property, real or sample, this clears every contract's native standing
+    overpayment (so the probe amount is not silently added on top of a
+    residence's own real voluntary overpayment) and attaches exactly one
+    override, on whichever contract's date span covers ``window_start``, when
+    the property has contracts; a property with no contracts falls back to
+    setting ``overpay_rules`` exactly as the pre-Phase-11 version of this test
+    file did.
+    """
+    if inputs.contracts:
+        new_contracts = []
+        injected = False
+        for c in inputs.contracts:
+            # Strip any real standing overpayment first, so the probe amount is
+            # the only recurring extra in play for this scenario.
+            cleared = replace(c, standing_overpayment=None)
+            covers_window = cleared.start_date <= window_start and (
+                cleared.end_date is None or cleared.end_date >= window_start
+            )
+            if not injected and covers_window:
+                cleared = replace(
+                    cleared,
+                    standing_overpayment=StandingOverpayment(
+                        amount=amount, start_date=window_start, end_date=window_end
+                    ),
+                )
+                injected = True
+            new_contracts.append(cleared)
+        assert injected, (
+            f"No contract on this property's loan covers {window_start}; "
+            "cannot inject a probe standing overpayment"
+        )
+        return replace(inputs, contracts=new_contracts)
+    # Legacy fallback: no contracts, so overpay_rules is what month_tables reads.
+    start_m = month_index(inputs.drawdown_date, window_start)
+    end_m = month_index(inputs.drawdown_date, window_end) if window_end else None
+    return replace(
+        inputs,
+        overpay_rules=[
+            {"start_month": start_m, "amount": amount, "repeat": "monthly", "end_month": end_m}
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # merge_extra_mode = true
 # ---------------------------------------------------------------------------
-
 def test_merge_extra_enabled_no_separate_extra(inputs):
     """Do not emit a standalone extra when a bank payment already includes it.
 
     Why we care
     -----------
-    When `merge_extra_mode` is set to ``true`` the engine should fold recurring
+    When `merge_extra_mode` is set to `true` the engine should fold recurring
     extras into the observed bank payment.  Seeing an additional "Extra" event
     would double-count cash leaving the account and ruin both reconciliations
     and KPI calculations.
     """
-
     pay_date = date(2025, 7, 5)  # month 17 from 2024-03 (in sample fixtures)
     ym = pay_date.year * 100 + pay_date.month
+    window_start = date(2025, 7, 1)
 
-    start_m = month_index(inputs.drawdown_date, date(2025, 7, 1))
+    # Phase 11 / S2: inject the probe overpayment through whichever schema this
+    # property actually reads it from, so the guard exercises the merge flag
+    # for real regardless of the property's schema.
     test_inputs = replace(
-        inputs,
-        overpay_rules=[{"start_month": start_m, "amount": 200.0, "repeat": "monthly", "end_month": None}],
+        _probe_overpayment_inputs(inputs, 200.0, window_start),
         merge_extra_mode="true",  # Phase-2 knob
     )
 
@@ -87,7 +163,6 @@ def test_merge_extra_enabled_no_separate_extra(inputs):
 # ---------------------------------------------------------------------------
 # merge_extra_mode = false
 # ---------------------------------------------------------------------------
-
 def test_merge_extra_disabled_posts_extra(inputs):
     """Emit a distinct extra when the merge flag is disabled.
 
@@ -98,14 +173,12 @@ def test_merge_extra_disabled_posts_extra(inputs):
     surfacing the amount in the monthly table.  Diverging from this behaviour
     would surprise users who rely on the legacy reporting format.
     """
-
     pay_date = date(2025, 7, 5)
     ym = pay_date.year * 100 + pay_date.month
+    window_start = date(2025, 7, 1)
 
-    start_m = month_index(inputs.drawdown_date, date(2025, 7, 1))
     test_inputs = replace(
-        inputs,
-        overpay_rules=[{"start_month": start_m, "amount": 200.0, "repeat": "monthly", "end_month": None}],
+        _probe_overpayment_inputs(inputs, 200.0, window_start),
         merge_extra_mode="false",
     )
 
@@ -129,7 +202,6 @@ def test_merge_extra_disabled_posts_extra(inputs):
 # ---------------------------------------------------------------------------
 # Projections with merged extras
 # ---------------------------------------------------------------------------
-
 def test_merge_extra_projection_month_adds_into_payment(inputs):
     """Projected months without actuals still include the standing extra.
 
@@ -139,12 +211,10 @@ def test_merge_extra_projection_month_adds_into_payment(inputs):
     need to confirm that projected payments in those months absorb the recurring
     extra instead of dropping it altogether.
     """
-
     # Start a recurring €200 from 2025-07; provide *no* actuals at all.
-    start_m = month_index(inputs.drawdown_date, date(2025, 7, 1))
+    window_start = date(2025, 7, 1)
     test_inputs = replace(
-        inputs,
-        overpay_rules=[{"start_month": start_m, "amount": 200.0, "repeat": "monthly", "end_month": None}],
+        _probe_overpayment_inputs(inputs, 200.0, window_start),
         merge_extra_mode="true",
     )
 

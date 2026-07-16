@@ -7,23 +7,33 @@ place, keeping the rest of the suite focused on behavioural assertions.
 Highlights
 ----------
 * Loads enabled properties from the resolved ``portfolio.yaml``.
+* Skips valuation-only properties (no bank actuals) so the mortgage-focused
+  tests parametrise over mortgage properties only.
 * Supports ``--prop`` (case-insensitive substring filter) for selective runs.
 * Provides cached fixtures for inputs, actuals, and engine outputs.
 * Offers ``--diag`` to print discovery diagnostics when debugging.
 
 If something goes wrong
 -----------------------
-* "No enabled properties matched" – double-check ``portfolio.yaml`` and
+* "No enabled properties matched" - double-check ``portfolio.yaml`` and
   the value passed via ``--prop``.
-* Import errors – ensure the repo root was injected into ``sys.path`` (handled
+* Import errors - ensure the repo root was injected into ``sys.path`` (handled
   near the top of this file).
-"""
 
+Phase 11 / S2 note: Property C (Paragon, owned outright, PKR) is a
+valuation-only property with no bank actuals. The shared ``case`` fixture below
+feeds the mortgage, reconcile, and tax tests, which need a bank feed, so C is
+excluded from discovery. Before this change, ``_load_cases`` read
+``p["actuals"]`` for every enabled property and raised ``KeyError: 'actuals'``
+at collection once C was enabled. C's behaviour is covered by
+``tests/test_property_c_valuation.py`` and the golden master instead.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+
 import sys
 
 import pytest
@@ -40,7 +50,15 @@ from src.engine import load_inputs, load_actuals, run_engine, compute_portal_sty
 from src.paths import resolve_data_dir, resolve_relative  # type: ignore
 
 
+# P11/S2: property kinds that carry no mortgage and therefore have no bank
+# actuals to reconcile against. Mirrors tools/portfolio.py so the test harness
+# and the runner agree on what "valuation-only" means without importing schema
+# internals.
+_VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
+
+
 # --------------------------- CLI options --------------------------------------
+
 def pytest_addoption(parser):
     """Register CLI switches that control property discovery."""
     parser.addoption(
@@ -57,6 +75,7 @@ def pytest_addoption(parser):
 
 
 # --------------------------- helpers ------------------------------------------
+
 def _slugify(name: str) -> str:
     """Convert a property name to a filesystem-friendly slug."""
     s = name.strip().lower()
@@ -65,6 +84,25 @@ def _slugify(name: str) -> str:
     while '--' in s:
         s = s.replace('--', '-')
     return s.strip('-')
+
+
+def _is_valuation_only(p: dict) -> bool:
+    """Return True when a portfolio entry is a no-mortgage, valuation-only property.
+
+    A valuation-only property declares no ``actuals`` bank feed (the primary
+    signal, matching the engine and tools/portfolio.py) or carries an
+    owned-outright ``property_kind``. The shared ``case`` fixture drives the
+    mortgage, reconcile, and tax tests, none of which have anything to assert
+    without a bank feed, so these properties are excluded from the parametrised
+    cases. Property C's behaviour is covered separately by
+    ``tests/test_property_c_valuation.py`` and the golden master.
+    """
+    # A missing actuals feed is what routes a property to the engine's
+    # valuation-only path, so it is the primary signal here too.
+    if not p.get("actuals"):
+        return True
+    # An explicit owned-outright kind is also accepted for clarity.
+    return str(p.get("property_kind", "")).strip().lower() in _VALUATION_ONLY_KINDS
 
 
 @dataclass(frozen=True)
@@ -79,13 +117,18 @@ class Case:
 
 
 def _load_cases(prop_filters: List[str]) -> List[Case]:
-    """Build the list of enabled properties from the resolved ``portfolio.yaml``.
+    """Build the list of enabled mortgage properties from the resolved ``portfolio.yaml``.
 
-    A property is included when it's marked ``enabled`` and matches the optional
-    ``--prop`` filters supplied on the command line.  The portfolio file is
-    located via the shared resolver, and each property's ``inputs`` and
-    ``actuals`` are resolved relative to the ``portfolio.yaml`` folder so the
-    data tree is self-contained and relocatable (P2/S2).
+    A property is included when it's marked ``enabled``, is not valuation-only,
+    and matches the optional ``--prop`` filters supplied on the command line.
+    The portfolio file is located via the shared resolver, and each property's
+    ``inputs`` and ``actuals`` are resolved relative to the ``portfolio.yaml``
+    folder so the data tree is self-contained and relocatable (P2/S2).
+
+    P11/S2: valuation-only properties (owned outright, no bank actuals, such as
+    Paragon C in PKR) are skipped. The ``case`` fixture feeds mortgage,
+    reconcile, and tax tests that need a bank feed, and a no-actuals property
+    would also raise KeyError on ``p["actuals"]`` here.
     """
     pf = [p.lower() for p in (prop_filters or [])]
     # P2/S2: locate portfolio.yaml via the resolver (CLI > env > paths.local.yaml > ./data).
@@ -93,9 +136,17 @@ def _load_cases(prop_filters: List[str]) -> List[Case]:
     port_path = resolve_data_dir() / "portfolio.yaml"
     raw = yaml.safe_load(port_path.read_text())
     props = raw.get("properties", []) if isinstance(raw, dict) else []
+
     cases: List[Case] = []
     for p in props:
         if not p.get("enabled", False):
+            continue
+        # P11/S2: skip valuation-only properties. They have no bank actuals, so
+        # the mortgage/reconcile/tax tests the `case` fixture drives cannot run
+        # against them, and accessing p["actuals"] below would KeyError. Their
+        # coverage lives in tests/test_property_c_valuation.py and the golden
+        # master.
+        if _is_valuation_only(p):
             continue
         name = p["name"]
         slug = _slugify(name)
@@ -119,6 +170,7 @@ def _load_cases(prop_filters: List[str]) -> List[Case]:
 
 
 # ---------------------- parametrisation hook ----------------------------------
+
 def pytest_generate_tests(metafunc):
     """Parametrise the ``case`` fixture with discovered properties."""
     if "case" in metafunc.fixturenames:
@@ -127,7 +179,7 @@ def pytest_generate_tests(metafunc):
         if metafunc.config.getoption("--diag"):
             print("\n[diag] discovered cases:")
             if not cases:
-                print("  (none) – check portfolio.yaml and --prop filter")
+                print("  (none) - check portfolio.yaml and --prop filter")
             for c in cases:
                 print(f"  - {c.slug}  | kind={c.kind}  | inputs={c.inputs_path}  | actuals={c.actuals_path}")
         if not cases:
@@ -136,6 +188,7 @@ def pytest_generate_tests(metafunc):
 
 
 # --------------------------- fixtures -----------------------------------------
+
 @pytest.fixture(scope="session")
 def inputs_path(case: Case) -> Path:
     """Path to the YAML inputs for the current property case."""

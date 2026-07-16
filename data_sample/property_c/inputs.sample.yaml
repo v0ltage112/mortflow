@@ -1,34 +1,46 @@
 # data_sample/property_c/inputs.sample.yaml
-# Sample owned-outright property — Paragon Towers, no mortgage.
-# Only the valuation module runs for this kind: the engine tracks the property
-# value over time and writes a minimal valuation output (no schedule, reconcile,
-# or tax). This file is intentionally left OUT of the bundled portfolio.yaml so
-# the golden master (scoped to property-a) is unaffected; wiring it into the
-# portfolio is S5. NEVER put real addresses, balances, or personal data here.
+# Sample owned-outright property (Paragon role) - a fully owned apartment with
+# no mortgage. Only the valuation module runs: the engine tracks the property
+# value over time in its own currency and writes a minimal valuation output
+# (no loan schedule, no reconcile, no tax). Reporting currency is PKR here so
+# the non-euro path is exercised end to end.
+#
+# Anonymised, real-shaped: the SHAPE is real (valuation-only, PKR, one base
+# value grown at a flat annual rate from a base date), while every rupee amount
+# and the base date are fictitious representative figures, not the real
+# purchase. No address, unit number, or personal data appears here. The real
+# Paragon values live only in the git-ignored data/property_c/ folder and on the
+# private Real Property Data page; NEVER put them in this file.
+#
+# Phase 11 / S2: enabled in data_sample/portfolio.yaml and locked by the golden
+# master (valuation_schedule.csv) alongside a dedicated valuation-only test.
 
 meta:
   property_id: property-c
   name: "PROPERTY C"
-  kind: owned_outright          # mortgage off, tax off, valuation on (S2 toggles)
+  kind: owned_outright          # mortgage off, tax off, valuation on
 
 # No 'loan' block: there is no mortgage. The valuation-only path reads the
 # dedicated 'valuation' block below instead of any loan-derived fields.
 valuation:
-  base_date: 2018-05-01         # date the base value is anchored from
-  base_value: 720000            # property value on base_date (EUR)
-  growth_pa: 0.035               # simple annual growth (3.5%); a bare 3.5 is also read as 3.5%
+  base_date: 2020-01-01         # date the base value is anchored from (fictitious)
+  base_value: 10000000          # property value on base_date, in PKR (fictitious)
+  growth_pa: 0.035              # flat annual growth (3.5%); a bare 3.5 is also read as 3.5%
+  cost_basis_value: 10800000     # PKR total invested (transfer ledger total below); reference only, never grown
+  cost_basis_note: "Token + final payment + transfer fee + broker fee + broker commission/lawyer"
   # Optional revaluations: pin a new value and/or growth rate from a later date.
   # blocks:
-  #   - { start: 2026-01-01, value: 815000, growth_pa: 0.02 }
+  #   - { start: 2024-01-01, value: 11500000, growth_pa: 0.03 }
 
-# --- Output knobs (honoured fully in S4; present here for parity) ---
+# --- Output knobs: report this property in its own currency (PKR) ---
 output:
   write_excel: true
   write_csv: true
-  currency: EUR
-  locale: en_IE
+  currency: PKR                 # non-euro: exercises the currency-aware money mask
+  locale: en_PK
+  csv_subdir: csv
 
 # --- Modelling horizon: how far the value series runs ---
 modelling:
-  end_date: 2045-05-01
+  end_date: 2045-01-01
   day_count: ACT/365            # informational; valuation uses whole-month growth

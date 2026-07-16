@@ -46,6 +46,14 @@ The portfolio rollup gains an explicit ``as_of_date`` first column, so the
 locked rollup column list below moves from 15 to 16 columns. This is the only
 shape change in S5; the per-property file names, sheet tabs, and CSV columns are
 unchanged, and the golden-master fixture for the rollup is re-baselined to match.
+
+Phase 11 / S2 note
+------------------
+Property C (owned outright, PKR, valuation-only) gains two reference-only
+columns on its CSV, cost_basis_value and unrecoverable_acquisition_cost, once
+the sample's valuation block carries a cost_basis_value, which the bundled
+sample now does. This is the only shape change in S2; every other property's
+file names, sheet tabs, and CSV columns are unchanged.
 """
 from __future__ import annotations
 
@@ -59,7 +67,6 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import pytest
 from openpyxl import load_workbook
-
 
 def _find_repo_root(start: Path) -> Path:
     """Return the repo root by walking up from this file.
@@ -80,7 +87,6 @@ def _find_repo_root(start: Path) -> Path:
         f"{start} contains both tools/ and data_sample/."
     )
 
-
 # Resolve the repo root from this file's location, robust to where it sits.
 REPO_ROOT = _find_repo_root(Path(__file__).resolve().parent)
 # The bundled de-identified sample data the whole suite runs against.
@@ -94,7 +100,6 @@ SAMPLE_PORTFOLIO = DATA_SAMPLE / "portfolio.yaml"
 # output.csv_subdir knob ("csv"); only the workbooks stay at the root. The
 # committed golden fixtures are unchanged and the S5 re-baseline owns moving them.
 CSV_SUBDIR = "csv"
-
 
 # ---------------------------------------------------------------------------
 # Locked v1.8.0 column vocabularies.
@@ -146,7 +151,13 @@ TAX_AUDIT_COLUMNS: List[str] = [
 ]
 
 # Valuation-only value-over-time series for a no-loan property.
-VALUATION_SCHEDULE_COLUMNS: List[str] = ["month_start", "ym", "property_value"]
+# Phase 11 / S2: cost_basis_value and unrecoverable_acquisition_cost are new,
+# reference-only columns that appear whenever the property's valuation block
+# sets cost_basis_value, which the bundled Property C sample now does.
+VALUATION_SCHEDULE_COLUMNS: List[str] = [
+    "month_start", "ym", "property_value",
+    "cost_basis_value", "unrecoverable_acquisition_cost",
+]
 
 # Portfolio rollup. Phase 8 / S4 rebuilt this list. The runner no longer carries
 # the dead KPI columns it used to list but never emit (property_value_asof,
@@ -160,15 +171,13 @@ VALUATION_SCHEDULE_COLUMNS: List[str] = ["month_start", "ym", "property_value"]
 # whole row is taken at is visible on the rollup itself. This moves the lock from
 # 15 to 16 columns, in order, and the golden-master fixture is re-baselined to
 # match.
-PORTFOLIO_SUMMARY_COLUMNS: List[str] = [
-    "as_of_date",
-    "property_name", "property_kind", "tax_enabled",
-    "current_balance", "property_value", "ltv", "current_annual_rate",
+PORTFOLIO_SUMMARY_COLUMNS = [
+    "as_of_date", "property_name", "property_kind", "tax_enabled", "currency",
+    "current_balance", "property_value", "native_value", "ltv", "current_annual_rate",
     "contractual_payment", "current_overpayment", "total_overpaid_to_date",
     "total_difference", "overpayment_mismatch_months",
     "payoff_date", "current_year_interest", "tax_deductible_interest",
 ]
-
 
 @dataclass(frozen=True)
 class PropertyShape:
@@ -195,7 +204,6 @@ class PropertyShape:
         nothing missing. The workbook is checked separately at the property root.
         """
         return sorted(self.csv_columns.keys())
-
 
 # The three sample properties, one of each kind, covering the full matrix of
 # output shapes the engine can produce today.
@@ -251,7 +259,6 @@ PROPERTY_SHAPES: List[PropertyShape] = [
 # Index the shapes by slug so the per-CSV test can look its property back up.
 SHAPES_BY_SLUG: Dict[str, PropertyShape] = {s.slug: s for s in PROPERTY_SHAPES}
 
-
 def _utf8_child_env() -> Dict[str, str]:
     """Return the current environment forced to UTF-8 stdio for a child run.
 
@@ -265,7 +272,6 @@ def _utf8_child_env() -> Dict[str, str]:
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     return env
-
 
 def _run_engine_for(shape: PropertyShape, out_dir: Path) -> None:
     """Run ``python -m src.engine`` once for a single sample property.
@@ -293,7 +299,6 @@ def _run_engine_for(shape: PropertyShape, out_dir: Path) -> None:
         check=True,  # raise immediately if the engine exits non-zero
     )
 
-
 def _run_portfolio(out_dir: Path) -> None:
     """Regenerate the portfolio rollup into ``out_dir`` via the real CLIs.
 
@@ -319,7 +324,6 @@ def _run_portfolio(out_dir: Path) -> None:
             check=True,
         )
 
-
 @pytest.fixture(scope="session")
 def property_outputs(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, Path]:
     """Run each sample property once per session; return slug -> output dir.
@@ -335,14 +339,12 @@ def property_outputs(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, Path
         dirs[shape.slug] = out_dir
     return dirs
 
-
 @pytest.fixture(scope="session")
 def portfolio_output(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Run the portfolio rollup once per session and return its output root."""
     out_dir = tmp_path_factory.mktemp("portfolio_rollup")
     _run_portfolio(out_dir)
     return out_dir
-
 
 def _read_csv_columns(csv_path: Path) -> List[str]:
     """Return the ordered column headings of a CSV without loading its rows.
@@ -351,7 +353,6 @@ def _read_csv_columns(csv_path: Path) -> List[str]:
     and immune to value formatting.
     """
     return pd.read_csv(csv_path, nrows=0).columns.tolist()
-
 
 def _read_sheet_names(workbook_path: Path) -> Tuple[str, ...]:
     """Return the worksheet tab names of an Excel workbook, in order.
@@ -365,7 +366,6 @@ def _read_sheet_names(workbook_path: Path) -> Tuple[str, ...]:
     finally:
         # Always release the file handle, even if reading the names raised.
         wb.close()
-
 
 @pytest.mark.parametrize("shape", PROPERTY_SHAPES, ids=[s.slug for s in PROPERTY_SHAPES])
 def test_property_file_set(property_outputs: Dict[str, Path], shape: PropertyShape) -> None:
@@ -406,7 +406,6 @@ def test_property_file_set(property_outputs: Dict[str, Path], shape: PropertySha
         f"  New/unexpected: {[f for f in produced_csvs if f not in expected_csvs] or 'none'}"
     )
 
-
 @pytest.mark.parametrize("shape", PROPERTY_SHAPES, ids=[s.slug for s in PROPERTY_SHAPES])
 def test_property_workbook_sheets(property_outputs: Dict[str, Path], shape: PropertyShape) -> None:
     """Each property workbook has exactly the expected sheet tabs, in order."""
@@ -422,7 +421,6 @@ def test_property_workbook_sheets(property_outputs: Dict[str, Path], shape: Prop
         f"  Produced: {list(produced)}"
     )
 
-
 # Flatten the per-property CSV expectations into one case per CSV so a single
 # changed file points straight at the property and file that moved.
 _CSV_CASES: List[Tuple[str, str, List[str]]] = [
@@ -430,7 +428,6 @@ _CSV_CASES: List[Tuple[str, str, List[str]]] = [
     for shape in PROPERTY_SHAPES
     for csv_name, columns in shape.csv_columns.items()
 ]
-
 
 @pytest.mark.parametrize(
     "slug,csv_name,expected_columns",
@@ -459,7 +456,6 @@ def test_property_csv_columns(
         f"  New/unexpected: {[c for c in produced if c not in expected_columns] or 'none'}"
     )
 
-
 def test_portfolio_summary_csv_columns(portfolio_output: Path) -> None:
     """The portfolio rollup CSV has exactly the locked columns, in order."""
     # Phase 8 / S3: the rollup CSV now lives under a top-level csv/ subfolder;
@@ -477,7 +473,6 @@ def test_portfolio_summary_csv_columns(portfolio_output: Path) -> None:
         f"  New/unexpected: {[c for c in produced if c not in PORTFOLIO_SUMMARY_COLUMNS] or 'none'}"
     )
 
-
 def test_portfolio_summary_workbook_sheet(portfolio_output: Path) -> None:
     """The portfolio rollup workbook has exactly one sheet, named Portfolio."""
     workbook_path = portfolio_output / "portfolio_summary.xlsx"
@@ -485,8 +480,8 @@ def test_portfolio_summary_workbook_sheet(portfolio_output: Path) -> None:
         f"portfolio_summary.xlsx was not produced at {workbook_path}."
     )
     produced = _read_sheet_names(workbook_path)
-    assert produced == ("Portfolio",), (
-        "portfolio_summary.xlsx sheet tabs changed.\n"
-        f"  Expected: ['Portfolio']\n"
-        f"  Produced: {list(produced)}"
-    )
+    assert produced == ("Portfolio", "Totals by currency"), (
+    "portfolio_summary.xlsx sheet tabs changed.\n"
+    f"  Expected: ['Portfolio', 'Totals by currency']\n"
+    f"  Produced: {list(produced)}"
+)

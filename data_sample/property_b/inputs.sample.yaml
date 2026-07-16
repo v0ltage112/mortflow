@@ -1,55 +1,92 @@
 # data_sample/property_b/inputs.sample.yaml
-# Sample primary residence (Somerton role) — an owner-occupied home with a
-# mortgage. Mortgage on, rental tax OFF (you do not pay income tax on the home
-# you live in), valuation on. Fully fictitious values; the schema mirrors a real
-# inputs.yaml so you can copy and adapt. NEVER put real addresses, balances, or
-# personal data here.
+# Sample primary residence (Somerton role) - an owner-occupied home with a
+# mortgage that refixed once. Mortgage on, rental tax OFF (you do not pay income
+# tax on the home you live in), valuation on.
+#
+# Anonymised, real-shaped: the schedule SHAPE is real - contract dates, rates,
+# term, the overpayment window, the month-end payment convention and the BOI
+# profile are the real ones - while every euro amount (drawdown, instalments,
+# overpayment, valuation) is an anonymised representative figure, not a real
+# balance. No address, account number, name or real property name appears here.
+# NEVER put real addresses, balances, or personal data in this file.
+#
+# Phase 11 / S1: migrated from the legacy month-number rate_blocks model to the
+# date-based Loan + contracts schema (docs/contract_data_model.md Section A):
+# two fixed contracts (B2 rolling into a B3 refix) then a variable tail (B4),
+# a standing overpayment on B2 that ends at the refix, on the BOI lender profile.
+# The engine derives month offsets from drawdown_date.
 
 meta:
   property_id: property-b
   name: "Property B"
-  kind: primary                 # mortgage on, tax off, valuation on (S2 toggles)
+  kind: primary                     # owner-occupied: mortgage on, tax off, valuation on
 
 loan:
-  property_price: 340000            # For LTV analytics and sell scenarios
-  principal_at_drawdown: 272000     # Net amount advanced on drawdown day (80% LTV)
-  drawdown_date: 2021-05-20         # Loan start date (value date)
-  total_term_months: 360            # Original contractual term (30 years)
-  first_payment_date: 2021-07-01    # First bank debit (actual)
-  known_first_payment: 1124.86      # Contractual PMT excluding standing extras
-  repayment_day_default: 1          # Used only when no bank payment exists for a month
-  property_growth_pa: 0.025         # Simple growth path for LTV (optional)
-  overpayment_cap_pct: 0.10         # 10% of opening balance per calendar year
+  property_id: property-b
+  lender: boi                       # resolves the BOI profile (Modified Following, ACT/365)
+  drawdown_amount: 373696           # anonymised representative advance (not a real balance)
+  drawdown_date: 2022-06-23         # loan start date (value date) at the BOI switch
+  total_term_months: 420            # contractual term from the switch (35 years)
+  property_value: 476000            # anonymised representative valuation (not the real figure)
+  property_growth_pa: 0.025         # provisional LTV growth path (exact figure TBD)
+  repayment_day: month_end          # BOI debits at month end; used only when no actual payment exists for a month
+  first_payment_date: 2022-07-31    # first bank debit; anchors when the projected schedule begins
+  overpayment_cap_pct: 0.10         # retired scalar (unused for any output); the real cap lives in the lender profile
 
-# Rate path; month numbers are from drawdown (1 = drawdown month).
-# Tip: prefer adding new blocks rather than editing historical ones.
-rate_blocks:
-  - { start_month: 1,   end_month: 36,  annual_rate: 0.0285, kind: fixed }
-  - { start_month: 37,  end_month: 96,  annual_rate: 0.0395, kind: fixed }
-  - { start_month: 97,  end_month: 999, annual_rate: 0.0350, kind: variable }
+  # Rate path as date-based contracts. A refix advances no new money, so it is a
+  # new contract on the same loan. Each contract runs to the day before the next
+  # starts (no gaps): B2 (fixed) -> B3 (fixed refix) -> B4 (variable tail).
+  contracts:
+    - id: B2
+      start_date: 2022-06-23        # drawdown day
+      end_date: 2026-06-23          # first fixed period end
+      rate: 0.0190                  # first fixed rate
+      rate_type: fixed
+      instalment: 1218.82           # contractual monthly repayment (excludes standing extras)
+      standing_overpayment:
+        amount: 119.00              # voluntary monthly overpayment, merged into the debit
+        start_date: 2025-07-31      # window opens
+        end_date: 2026-06-30        # window closes at the B3 refix
+        note: "voluntary overpay window; ends at the B3 refix"
+    - id: B3
+      start_date: 2026-06-24        # day after B2 ends (no gap)
+      end_date: 2030-06-23          # second fixed period end
+      rate: 0.0310                  # refixed fixed rate
+      rate_type: fixed
+      instalment: 1550.21           # recalculated contractual repayment at the refix
+      # no standing overpayment on B3
+    - id: B4
+      start_date: 2030-06-24        # day after B3 ends (no gap)
+      end_date: null                # open-ended variable tail to the end of term
+      rate: 0.0350                  # indicative variable rate (real roll-to rate TBD)
+      rate_type: variable
+      instalment: null              # derive via PMT at the roll to variable
 
-# When a new block starts and there is no actual payment in that month:
-#   RecalculatePayment -> compute new PMT at new rate over remaining term
-#   TermReduction     -> keep PMT, reduce term
+# When a new contract starts and there is no actual payment in that month:
+#   RecalculatePayment -> compute a new PMT at the new rate over the remaining term
 strategy_at_refix: RecalculatePayment
 
-# No standing extras or one-off lump sums on this sample residence.
-overpay_rules: []
+# No one-off lump sums on this residence.
 lump_sums: []
 
-# --- Optional, bank-specific behaviour (not all are used yet) ---
+# --- Optional, bank-specific behaviour ---
 bank:
-  day_count: ACT/365                # Engine uses /365 today
-  rounding_decimals: 2              # Post interest rounded to 2 decimals
-  merge_standing_extra_into_payment: auto   # auto|true|false
+  day_count: ACT/365                        # Engine uses /365 today
+  rounding_decimals: 2                      # Post interest rounded to 2 decimals
+  merge_standing_extra_into_payment: true   # fold the overpayment into the debit during the window
   interest_posting_rule: actual_or_eom      # Use actual date when provided, else EOM
 
-# --- Reconciliation tolerance / portal snapshots ---
+# --- Reconciliation tolerance / bank snapshots ---
+# The committed sample ships an anonymised real bank feed (see actuals.sample.csv)
+# plus one snapshot, so the golden also locks the reconcile path. Every euro figure
+# is anonymised on the same single factor as the loan amounts. Real reconciliation
+# still runs off the git-ignored data/property_b/ real feed.
 reconcile:
-  ok_abs_eur: 0.01
-  snapshots: []
+  ok_abs_eur: 300.00                # rows are OK if |model - bank| <= EUR 300
+  snapshots:
+    - { date: 2025-12-31, balance: 345976.38 }   # anonymised bank balance (same factor as the feed)
 
-# --- Optional, output knobs (honoured in S4) ---
+# --- Optional, output knobs ---
 output:
   write_excel: true
   write_csv: true
@@ -59,14 +96,10 @@ output:
 
 # --- Modelling horizon ---
 modelling:
-  end_date: 2051-06-01
+  end_date: 2057-06-30              # ~420 months from drawdown
   day_count: ACT/365                # informational; the engine uses /365
 
-# --- Irish tax settings: OFF for an owner-occupied residence ---
+# --- Irish tax: OFF for an owner-occupied home ---
 tax:
   enabled: false
   jurisdiction: IE
-  use_posting_date_for_year: true
-  deductible_percentage_by_year:
-    default: 1.00
-  deductible_windows: []
