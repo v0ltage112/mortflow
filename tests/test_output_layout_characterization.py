@@ -171,10 +171,9 @@ VALUATION_SCHEDULE_COLUMNS: List[str] = [
 # whole row is taken at is visible on the rollup itself. This moves the lock from
 # 15 to 16 columns, in order, and the golden-master fixture is re-baselined to
 # match.
-PORTFOLIO_SUMMARY_COLUMNS: List[str] = [
-    "as_of_date",
-    "property_name", "property_kind", "tax_enabled",
-    "current_balance", "property_value", "ltv", "current_annual_rate",
+PORTFOLIO_SUMMARY_COLUMNS = [
+    "as_of_date", "property_name", "property_kind", "tax_enabled", "currency",
+    "current_balance", "property_value", "native_value", "ltv", "current_annual_rate",
     "contractual_payment", "current_overpayment", "total_overpaid_to_date",
     "total_difference", "overpayment_mismatch_months",
     "payoff_date", "current_year_interest", "tax_deductible_interest",
@@ -481,8 +480,8 @@ def test_portfolio_summary_workbook_sheet(portfolio_output: Path) -> None:
         f"portfolio_summary.xlsx was not produced at {workbook_path}."
     )
     produced = _read_sheet_names(workbook_path)
-    assert produced == ("Portfolio",), (
-        "portfolio_summary.xlsx sheet tabs changed.\n"
-        f"  Expected: ['Portfolio']\n"
-        f"  Produced: {list(produced)}"
-    )
+    assert produced == ("Portfolio", "Totals by currency"), (
+    "portfolio_summary.xlsx sheet tabs changed.\n"
+    f"  Expected: ['Portfolio', 'Totals by currency']\n"
+    f"  Produced: {list(produced)}"
+)
