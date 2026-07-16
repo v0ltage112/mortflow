@@ -65,13 +65,21 @@ extra. Both keep a legacy fallback: a file with no contracts still reads
 Property B/C samples stay byte-identical. Property A (converted to contracts)
 reproduces its retired rate windows and its month-17 / EUR200 standing extra
 exactly, so the Gandon golden does not move.
+
+Phase 12 / S1 note: ``build_monthly_schedule`` takes one more collector,
+``month_cap_allowance`` (the per-payment BOI overpayment-cap allowance in euro
+resolved read-only in the daily loop from the contract in effect), and emits it
+as the new ``overpayment_cap_allowance_eur`` column. Additive: it adds a single
+column and changes no existing column or value, so the golden master diffs to
+exactly that one new column (re-baselined at S3). A month with no resolvable
+allowance carries a null, distinct from a real zero.
 """
 
 from __future__ import annotations
 
 import sys
 from datetime import date
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -311,6 +319,7 @@ def build_monthly_schedule(
     month_interest_used: Dict[int, float],
     month_rate: Dict[int, float],
     month_contractual: Dict[int, float],
+    month_cap_allowance: Dict[int, Optional[float]],
     payment_unattributed_ok_abs_eur: float = 0.01,
 ) -> pd.DataFrame:
     """Assemble the final per-month schedule after the daily loop has run.
@@ -320,19 +329,22 @@ def build_monthly_schedule(
     payment, any standing extra, any lump sum, and the interest charged, derives
     the principal repaid, records the interest posting date, and lines up the
     month-end balances for both the model and the bank so the two can be
-    compared. It also reports the contractual baseline for the month: the agreed
+    compared. It also reports the contractual baseline for the month (the agreed
     instalment where the bank has confirmed one, otherwise the model's projected
-    payment. These rows drive the Monthly schedule sheet and the tax outputs.
+    payment) and, from Phase 12 / S1, the per-payment BOI overpayment-cap
+    allowance in euro. These rows drive the Monthly schedule sheet and the tax
+    outputs.
 
     Technical note: pure relocation of the post-loop assembly from
-    ``run_engine``, plus the Phase 7 / S2 additive column. The per-month
-    collector dicts (``month_paid``, ``month_extras``, ``month_lumps``,
-    ``month_interest_used``, ``month_rate``, ``month_contractual``) are passed in
+    ``run_engine``, plus the Phase 7 / S2 additive contractual column and the
+    Phase 12 / S1 additive cap-allowance column. The per-month collector dicts
+    (``month_paid``, ``month_extras``, ``month_lumps``, ``month_interest_used``,
+    ``month_rate``, ``month_contractual``, ``month_cap_allowance``) are passed in
     explicitly so this module never reaches back into ``simulate``. As before,
     it mutates ``events_df`` in place by adding the ``ym`` helper column used to
     align events to their calendar month; this matches the pre-S3 behaviour
-    exactly. ``contractual_payment`` is appended only; no existing column or
-    value changes.
+    exactly. The new columns are appended only; no existing column or value
+    changes.
 
     Phase 7 / S3 note: this assembly now also emits the principled attribution
     split. ``total_paid`` is the full monthly debit (the sum of the legacy
@@ -346,6 +358,14 @@ def build_monthly_schedule(
     ``overpayment_mismatch`` flags an actual-payment month whose Difference
     exceeds ``payment_unattributed_ok_abs_eur``. All four are derived from
     figures the daily loop already settled, so no conserved quantity moves.
+
+    Phase 12 / S1 note: ``overpayment_cap_allowance_eur`` is the per-payment BOI
+    overpayment-cap allowance in euro for the month, resolved in the daily loop
+    from the contract in effect (max(percent * instalment, floor_eur) under the
+    rule in force on the contract start_date). It is a null in months with no
+    resolvable allowance (no profile, no stated instalment, no cap rule, or a
+    non-payment month), keeping \"unknown\" distinct from a real zero. Additive:
+    one new column, no conserved figure moves.
     """
     # Plain-English progress line for troubleshooting (stderr only; never stdout).
     print(
@@ -405,6 +425,19 @@ def build_monthly_schedule(
             r.has_actual_payment and abs(payment_unattributed) > payment_unattributed_ok_abs_eur
         )
 
+        # ---------------- OVERPAYMENT-CAP ALLOWANCE (Phase 12 / S1) ----------------
+        # The per-payment BOI voluntary-overpayment allowance in euro for this
+        # month, resolved in the daily loop from the contract in effect
+        # (max(percent * instalment, floor_eur) under the rule in force on the
+        # contract start_date). None (no profile, no stated instalment, no cap
+        # rule, or a non-payment month) is emitted as a null so \"unknown\" stays
+        # distinct from a real zero. Additive: one new column, no existing figure
+        # changes.
+        _cap_allowance = month_cap_allowance[ymkey]
+        overpayment_cap_allowance_eur = (
+            None if _cap_allowance is None else round(float(_cap_allowance), 2)
+        )
+
         rows.append(dict(
             ym=ymkey,
             month_start=r.month_start,
@@ -423,6 +456,9 @@ def build_monthly_schedule(
             total_paid=total_paid,
             difference=payment_unattributed,
             overpayment_mismatch=overpayment_mismatch,
+            # Phase 12 / S1: additive per-payment cap allowance in euro (null
+            # where unresolvable). Does not feed the attribution split above.
+            overpayment_cap_allowance_eur=overpayment_cap_allowance_eur,
             interest_used=round(interest_used, 2),
             principal_paid=round(principal, 2),
             annual_rate=month_rate[ymkey],
