@@ -15,7 +15,8 @@ The code is decoupled from where its data and outputs live. Clone the repo anywh
 - **Bank reconciliation** – running balance comparison, portal snapshots, and tolerances are tracked so the model stays aligned with the bank feed.
 - **Tax reporting** – tenancy metadata and occupancy windows drive the Form 11 `TaxYear`, `TaxAudit`, and `TenancyLog` sheets when tax is enabled.
 - **Valuation & LTV analytics** – valuation blocks and HPI-style growth factors feed portfolio KPIs such as `property_value_asof` and `ltv_asof`.
-- **Portfolio + baseline tooling** – batch run every enabled property, produce a formatted summary workbook, and pre-compute "strict" contractual baselines for reconciliations.
+- **Portfolio + baseline tooling** – the portfolio runner auto-discovers every enabled property from `portfolio.yaml` (adding one is a config change, no code edit), produces a formatted summary workbook, and pre-computes "strict" contractual baselines for reconciliations.
+- **Currency-aware rollup** – each property carries its own currency and `native_value`; the portfolio summary reports a per-currency total (`portfolio_totals_by_currency.csv` and a matching workbook sheet) and never sums a non-euro property into the euro aggregate.
 - **Portable paths** – data and output locations are resolved from config (CLI flag, environment variable, or `paths.local.yaml`), so the code and your private data can live in separate places on any machine.
 
 ---
@@ -179,6 +180,8 @@ python -m tools.portfolio --portfolio data/portfolio.yaml --out out/portfolio
 
 Use `--only "Property Name"` to run a single entry from the portfolio file.
 
+The runner discovers properties from `portfolio.yaml` alone, so enabling, disabling, or adding a property is a config-only change with no code edit. Each property keeps its own currency: the rollup writes `portfolio_totals_by_currency.csv` (and a matching workbook sheet) that totals value per currency and never sums a non-euro property, such as a PKR-denominated one, into the euro aggregate.
+
 ### Baseline builder
 
 Baselines strip user overlays (recurring overpays, lump sums, merge-extra behaviour) so you can reconcile pure contractual schedules with bank data:
@@ -205,13 +208,13 @@ See `data_sample/` for the expected format and schema of each file type.
 
 ## 📊 Tests
 
-The pytest suite covers reconciliation tolerances, interest accrual, valuation blocks, tax schedules, KPI calculations, path resolution, and regression guards around merge-extra behaviour.
+The pytest suite covers reconciliation tolerances, interest accrual, valuation blocks, tax schedules, KPI calculations, path resolution, portfolio manifest discovery, the currency-aware rollup, and regression guards around merge-extra behaviour.
 
 ```bash
 pytest -q
 ```
+Expected: **168 passed, 4 skipped, 0 failed**.
 
-Expected: **127 passed, 2 skipped, 0 failed**.
 
 Run the tests after dependency updates or when you change the engine/tax logic to ensure both the financial maths and tax outputs stay within contract tolerances.
 
@@ -247,6 +250,7 @@ Remove those months from the tenancy file or configure `deductible_window` range
 | v1.8.0 | 2026-06-29 | Overpayment attribution. Each monthly payment now splits into contractual, overpayment, lump, and an explicit Difference residual, driven by agreed terms rather than the merge flag. Conserved quantities (total paid, interest, principal, balance, payoff) byte-identical to v1.7.0; only the attribution columns are new, renamed, or reordered. Legacy payment_amount and extra_amount columns retired; portfolio KPIs report total_contractual / total_overpayment / total_difference and the next-payment figure reports the contractual instalment. Golden master re-baselined to the new column set. |
 | v1.9.0 | 2026-06-30 | Output deliverables. Each property now gets its own `<slug>_model.xlsx` workbook (Summary sheet first, plus a Valuation sheet and the Phase 7 attribution-split totals), every CSV is demoted into a `csv/` subfolder behind an `output.csv_subdir` knob, and the top-level `portfolio_summary.xlsx` rollup is rebuilt to surface the attribution columns, the Section 97 tax-deductible interest, and an explicit `as_of_date` snapshot date. Engine maths byte-identical to v1.8.0: only the output file shape moved, no figure changed. Golden master re-baselined to the new file set and paths. |
 | v2.0.0 | 2026-07-06 | Contract schema redesign + Inputs formalisation. The month-number rate model (rate_blocks, contractual_ladder, overpay_rules, the scalar overpayment_cap_pct, strategy_at_refix, and bank.payment_holidays) is replaced by a date-based contracts array that separates loan-level facts (one drawdown of new money) from contract-level facts (a sequence of rate agreements), resolved against an effective-dated per-lender profile (committed data/lenders/sample_lender.yaml, git-ignored boi.local.yaml) for the overpayment cap, the breakage reference, the day-count, and the payment-date convention. Inputs becomes a frozen dataclass with .copy() / .clone() for safe scenario cloning. The projected payment-date convention moves from a day-of-month clamp to Modified Following on an Irish business-day calendar, the one deliberate behaviour change, so projected future payment dates shift and the golden master was re-baselined; every conserved quantity through the refactor stayed byte-identical. Overpayment cap is max(10% of the monthly instalment, EUR 65 floor). Tests: 127 passed, 2 skipped. Rollback v1.9.0. |
+| v2.1.0 | 2026-07-16 | Activation of all three properties on real data + portfolio manifest refactor. Somerton (Property B, primary residence: mortgage on, tax off) and Paragon (Property C, owned-outright: valuation-only, PKR) join Gandon (Property A, investment), all on the date-based contract schema from v2.0.0. tools/portfolio.py becomes a thin orchestrator that auto-discovers enabled properties from portfolio.yaml, so adding or toggling a property is a config-only change with no code edit. The rollup is now currency-aware: every property carries a currency and native_value, a new portfolio_totals_by_currency.csv plus a matching workbook sheet report value per currency, and a non-euro property is never summed into the euro aggregate (Paragon shows on its own PKR row). Valuation-only inputs settle on canonical base_value + base_date (value / start kept as aliases) with an optional reference-only cost_basis_value / cost_basis_note. Engine maths byte-identical to v2.0.0: only data activation, the runner, and the rollup columns changed; golden masters re-baselined across A, B, and C in one consistent pass. Tests: 168 passed, 4 skipped. Rollback v2.0.0. |
 
 
 ---
