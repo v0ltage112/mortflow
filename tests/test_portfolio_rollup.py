@@ -1,4 +1,3 @@
-# tests/test_portfolio_rollup.py
 """Tests for the portfolio rollup: locked columns, currency tagging, and the
 per-currency totals file.
 
@@ -6,24 +5,40 @@ Phase 11 / S3 extends the S2 version for two new rollup columns (currency,
 native_value) and the new portfolio_totals_by_currency.csv. The rollup
 fixture below returns both artefacts from one pipeline run, so every test
 that used to read the summary dataframe directly now reads rollup.summary.
+
+Phase 12 / S3 extends the locked column set again for the overpayment cap:
+three additive rollup columns (overpayment_cap_allowance,
+overpayment_cap_headroom, overpayment_cap_flag) land between
+current_overpayment and total_overpaid_to_date, moving the lock from 18 to 21
+columns. The cap columns are additive only; no existing column moved or changed
+meaning.
 """
+
 from __future__ import annotations
+
 from dataclasses import dataclass
 import sys
 from pathlib import Path
+
 import pandas as pd
 import pytest
 
 import tools.portfolio as portfolio
 
-# Locked column order (Phase 8 / S4, extended by S5's as_of_date and Phase 11
-# / S3's currency + native_value). A test failure here means a column was
-# added, removed, or reordered without updating this lock deliberately.
+
+# Locked column order (Phase 8 / S4, extended by S5's as_of_date, Phase 11 / S3's
+# currency + native_value, and Phase 12 / S3's three overpayment cap columns). A
+# test failure here means a column was added, removed, or reordered without
+# updating this lock deliberately.
 EXPECTED_PORTFOLIO_COLUMNS = [
     "as_of_date",
     "property_name", "property_kind", "tax_enabled", "currency",
     "current_balance", "property_value", "native_value", "ltv", "current_annual_rate",
-    "contractual_payment", "current_overpayment", "total_overpaid_to_date",
+    "contractual_payment", "current_overpayment",
+    # Phase 12 / S3: the overpayment cap trio sits with the overpayment figures
+    # it qualifies, before the cumulative total-to-date column.
+    "overpayment_cap_allowance", "overpayment_cap_headroom", "overpayment_cap_flag",
+    "total_overpaid_to_date",
     "total_difference", "overpayment_mismatch_months",
     "payoff_date", "current_year_interest", "tax_deductible_interest",
 ]
@@ -34,6 +49,7 @@ class RollupResult:
     """The two artefacts a single portfolio run produces: the row-per-property
     summary and the row-per-currency totals.
     """
+
     summary: pd.DataFrame
     totals_by_currency: pd.DataFrame
 
@@ -54,7 +70,6 @@ def rollup(tmp_path_factory) -> RollupResult:
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(sys, "argv", argv)
         portfolio.main()
-
     csv_dir = out_dir / "csv"
     summary = pd.read_csv(csv_dir / "portfolio_summary.csv")
     totals = pd.read_csv(csv_dir / "portfolio_totals_by_currency.csv")
@@ -103,13 +118,10 @@ def test_currency_totals_keep_eur_and_pkr_separate(rollup):
     """
     totals = rollup.totals_by_currency
     assert set(totals["currency"]) == {"EUR", "PKR"}
-
     eur_total = totals.loc[totals["currency"] == "EUR"].iloc[0]
     pkr_total = totals.loc[totals["currency"] == "PKR"].iloc[0]
-
     eur_rows = rollup.summary.loc[rollup.summary["currency"] == "EUR"]
     pkr_rows = rollup.summary.loc[rollup.summary["currency"] == "PKR"]
-
     assert eur_total["property_count"] == len(eur_rows)
     assert pkr_total["property_count"] == len(pkr_rows)
     assert eur_total["total_native_value"] == pytest.approx(eur_rows["native_value"].sum())

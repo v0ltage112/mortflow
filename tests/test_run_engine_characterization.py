@@ -1,4 +1,3 @@
-# tests/test_run_engine_characterization.py
 """Characterization test for run_engine against the Property A sample data.
 
 Finance-readable summary
@@ -27,7 +26,6 @@ import pandas as pd
 import pytest
 
 from src.engine import load_inputs, load_actuals, run_engine
-
 
 # Repository root = two levels up from this test file (tests/ -> repo root).
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -69,13 +67,16 @@ def test_monthly_columns_and_rowcount(engine_result):
         # extra_amount retired; lump_amount -> lump, payment_unattributed ->
         # difference, contractual_payment -> contractual).
         "contractual", "overpayment", "lump", "total_paid", "difference",
+        # Phase 12 / S3: the four additive overpayment cap columns.
+        "overpayment_cap_allowance_eur", "overpayment_cap_headroom_eur",
+        "overpayment_cap_flag", "overpayment_cumulative_eur",
         "interest_used", "principal_paid", "annual_rate",
         "bank_posted_interest_present", "posting_date", "posting_year",
         "model_eom_balance", "bank_eom_running_balance",
         "eom_diff_model_minus_bank", "property_value", "ltv_model_eom",
         "ltv_bank_eom",
         "overpayment_mismatch",
-}
+    }
     assert set(monthly.columns) == expected_cols
     # Drawdown month 2024-03 through modelling end 2059-04 inclusive = 422 months.
     assert len(monthly) == 422
