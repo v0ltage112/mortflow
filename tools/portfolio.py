@@ -29,6 +29,18 @@ is grouped by currency (see build_currency_totals), written to
 portfolio_totals_by_currency.csv and a second workbook sheet: the EUR row
 aggregates Property A and B; the PKR row is Property C alone. Engine maths is
 still untouched; this remains a read-and-aggregate layer only.
+
+Phase 12 / S2 note: the rollup surfaces the live-position overpayment-cap state
+for each mortgage property. Three columns are read straight off the current
+monthly snapshot row (the same row the other live figures use):
+overpayment_cap_allowance and overpayment_cap_headroom (both euro, taken from
+the monthly overpayment_cap_allowance_eur / overpayment_cap_headroom_eur
+columns) and overpayment_cap_flag (the ok / approaching / breached label the
+engine already computed, so the rollup never re-derives the threshold). They sit
+immediately after current_overpayment, moving the locked column set from 18 to
+21. A valuation-only property has no loan and so leaves all three blank (the
+reindex fills them). Engine maths is untouched; this stays a read-and-aggregate
+layer.
 """
 from __future__ import annotations
 import argparse, subprocess, sys
@@ -60,11 +72,15 @@ DEFAULT_CSV_SUBDIR = "csv"
 # here is a deliberate, tested change; every row is reindexed onto this exact
 # list, so a row that omits a column (a valuation-only property has no loan
 # columns) is padded with a blank rather than silently shifting the others.
+# Phase 12 / S2: the three overpayment-cap columns are surfaced right after the
+# current overpayment, moving the lock from 18 to 21 columns.
 LOCKED_SUMMARY_COLUMNS = [
     "as_of_date",
     "property_name", "property_kind", "tax_enabled", "currency",
     "current_balance", "property_value", "native_value", "ltv", "current_annual_rate",
-    "contractual_payment", "current_overpayment", "total_overpaid_to_date",
+    "contractual_payment", "current_overpayment",
+    "overpayment_cap_allowance", "overpayment_cap_headroom", "overpayment_cap_flag",
+    "total_overpaid_to_date",
     "total_difference", "overpayment_mismatch_months",
     "payoff_date", "current_year_interest", "tax_deductible_interest",
 ]
@@ -291,9 +307,12 @@ def write_summary_xlsx(df: pd.DataFrame, path: Path, totals: Optional[pd.DataFra
         except Exception:
             pass
 
+        # Phase 12 / S2: the two euro overpayment-cap columns join the money
+        # set; overpayment_cap_flag is text and needs no number format.
         money_cols = [
             "current_balance", "property_value", "contractual_payment",
-            "current_overpayment", "total_overpaid_to_date", "total_difference",
+            "current_overpayment", "overpayment_cap_allowance", "overpayment_cap_headroom",
+            "total_overpaid_to_date", "total_difference",
             "current_year_interest", "tax_deductible_interest",
         ]
         pct_cols = ["ltv", "current_annual_rate"]
@@ -400,6 +419,12 @@ def _mortgage_summary_row(
     Phase 11 / S3: currency and native_value are added by
     _finalize_currency_fields at the end, so a mortgage property is tagged the
     same way a valuation-only property is, rather than assuming euro silently.
+
+    Phase 12 / S2: the live-position overpayment-cap state is read straight off
+    the current monthly snapshot row: overpayment_cap_allowance and
+    overpayment_cap_headroom from the monthly euro columns, and
+    overpayment_cap_flag as the label the engine already computed (the rollup
+    never re-applies the threshold).
     """
     as_of = _derive_as_of(csv_dir, inputs_path)
     current = _current_row(monthly, as_of)
@@ -439,6 +464,22 @@ def _mortgage_summary_row(
         value = current[col]
         return float(value) if pd.notna(value) else None
 
+    def _flag(col: str) -> Optional[str]:
+        """Read a text flag from the current snapshot row as a str or None.
+
+        The overpayment-cap flag is text (ok / approaching / breached) and is a
+        pandas null in a month with no resolvable allowance, so a NaN reads
+        back as None rather than the string 'nan'.
+        """
+        if col not in current.index:
+            return None
+        value = current[col]
+        if value is None:
+            return None
+        if not isinstance(value, str) and pd.isna(value):
+            return None
+        return str(value)
+
     row = {
         "as_of_date": as_of,
         "property_name": name,
@@ -450,6 +491,12 @@ def _mortgage_summary_row(
         "current_annual_rate": _cell("annual_rate"),
         "contractual_payment": _cell("contractual"),
         "current_overpayment": _cell("overpayment"),
+        # Phase 12 / S2: the live-position overpayment-cap state, read straight
+        # off the current monthly snapshot row (the flag is computed once in the
+        # engine, so the rollup only surfaces it).
+        "overpayment_cap_allowance": _cell("overpayment_cap_allowance_eur"),
+        "overpayment_cap_headroom": _cell("overpayment_cap_headroom_eur"),
+        "overpayment_cap_flag": _flag("overpayment_cap_flag"),
         "total_overpaid_to_date": total_overpaid_to_date,
         "total_difference": total_difference,
         "overpayment_mismatch_months": mismatch_months,
@@ -466,6 +513,10 @@ def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: boo
     Phase 11 / S3: property_value is always set to the native figure here; the
     S2 interim guard now lives entirely in _finalize_currency_fields, which
     every row (mortgage or valuation-only) passes through the same way.
+
+    Phase 12 / S2: a valuation-only property has no loan, so the three
+    overpayment-cap columns are simply omitted here and the reindex fills them
+    blank, exactly like every other loan-only column.
     """
     val_csv = csv_dir / "valuation_schedule.csv"
     if not val_csv.exists():

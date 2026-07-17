@@ -1,4 +1,3 @@
-# tests/test_attribution_characterization.py
 """Characterization snapshot of the Monthly schedule after Phase 7 / S4.
 
 Finance-readable summary
@@ -9,7 +8,6 @@ now Contractual / Overpayment / Lump / Total paid / Difference, the legacy
 payment_amount and extra_amount columns are retired, and interest, principal and
 balance keep their names. This file re-baselines the snapshot to that final
 column set so any future drift is deliberate and visible:
-
 * it locks the exact set of Monthly columns under the final vocabulary,
 * it confirms the attribution columns are present,
 * it pins the conservation identity: contractual + overpayment + lump +
@@ -27,6 +25,14 @@ attribution columns, the conservation identity, the unchanged principal
 identity, representative cells, and the monthly-vs-events interest invariant. The
 conserved figures match the committed golden fixtures; S4 only renames columns
 and drops the two retired duplicates.
+
+Phase 12 / S3 note
+------------------
+The overpayment cap adds four additive columns to the Monthly schedule
+(overpayment_cap_allowance_eur, overpayment_cap_headroom_eur,
+overpayment_cap_flag, overpayment_cumulative_eur). They join the locked column
+set below. No attribution column moved or changed meaning, so every identity and
+cell assertion here is unchanged.
 """
 
 from __future__ import annotations
@@ -37,7 +43,6 @@ import pandas as pd
 import pytest
 
 from src.engine import load_inputs, load_actuals, run_engine
-
 
 # Repository root = two levels up from this test file (tests/ -> repo root).
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -52,12 +57,15 @@ MONEY_ATOL = 0.005
 # vocabulary (contractual / overpayment / lump / total_paid / difference) plus
 # the reconciliation flag, alongside the unchanged interest, principal, balance,
 # rate, posting and valuation columns. payment_amount and extra_amount are
-# retired. This is the snapshot the next session must re-baseline if it changes
-# the column set.
+# retired. Phase 12 / S3 adds the four additive overpayment cap columns after the
+# attribution block. This is the snapshot the next session must re-baseline if it
+# changes the column set.
 ATTRIBUTION_MONTHLY_COLS = {
     "ym", "month_start", "payment_date",
     "contractual", "overpayment", "lump", "total_paid", "difference",
     "overpayment_mismatch",
+    "overpayment_cap_allowance_eur", "overpayment_cap_headroom_eur",
+    "overpayment_cap_flag", "overpayment_cumulative_eur",
     "interest_used", "principal_paid", "annual_rate",
     "bank_posted_interest_present", "posting_date", "posting_year",
     "model_eom_balance", "bank_eom_running_balance",

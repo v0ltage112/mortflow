@@ -57,6 +57,14 @@ sub-folder (default ``csv``) instead of beside the workbook; the
 ``csv_subdir`` restores the flat layout. CSV contents and the engine maths are
 unchanged, so the golden master (which compares CSV values) stays green; only
 the paths moved.
+
+Phase 12 / S2 note: the overpayment cap is surfaced on the Summary sheet. The
+per-period allowance, headroom, and approaching/breached flag are read from the
+as-of month row (the same row the current rate is taken from) and shown as three
+Summary rows, so the cap is visible on the headline sheet. The allowance and
+headroom rows join the money-format set; the status row is text. These are
+presentation rows only: no engine maths changes and no CSV artefact changes, so
+the golden-master CSVs are untouched.
 """
 
 from __future__ import annotations
@@ -144,7 +152,7 @@ def main():
     # Core engine run ---------------------------------------------------------
     monthly, reconcile, events = run_engine(inputs, actuals)
 
-    # ---- Derive \"as-of\" and quick summary stats for Summary sheet
+    # ---- Derive "as-of" and quick summary stats for Summary sheet
     rec_non_na = (
         reconcile.dropna(subset=["model_balance"]) if "model_balance" in reconcile.columns else reconcile.copy()
     )
@@ -203,6 +211,26 @@ def main():
         hit = monthly.loc[monthly["ym"] == ym_key]
         if not hit.empty:
             cur_rate = float(hit.iloc[0]["annual_rate"])
+
+    # Phase 12 / S2: read the overpayment cap figures for the Summary. Allowance,
+    # headroom, and the flag are per-period values, so they are taken from the
+    # as-of month row (the same row the current rate uses) rather than summed.
+    cap_allowance = None
+    cap_headroom = None
+    cap_flag = None
+    if asof_date is not None and "ym" in monthly.columns:
+        cap_ym_key = int(pd.Timestamp(asof_date).year * 100 + pd.Timestamp(asof_date).month)
+        cap_hit = monthly.loc[monthly["ym"] == cap_ym_key]
+        if not cap_hit.empty:
+            cap_row = cap_hit.iloc[0]
+            # Each column is guarded so a schedule built before the cap columns
+            # existed degrades to a blank Summary row rather than crashing.
+            if "overpayment_cap_allowance_eur" in cap_row.index and pd.notna(cap_row["overpayment_cap_allowance_eur"]):
+                cap_allowance = float(cap_row["overpayment_cap_allowance_eur"])
+            if "overpayment_cap_headroom_eur" in cap_row.index and pd.notna(cap_row["overpayment_cap_headroom_eur"]):
+                cap_headroom = float(cap_row["overpayment_cap_headroom_eur"])
+            if "overpayment_cap_flag" in cap_row.index and pd.notna(cap_row["overpayment_cap_flag"]):
+                cap_flag = str(cap_row["overpayment_cap_flag"])
 
     # Property value path (coerce 1.00 to 1% if user wrote percent)
     prop_val = None
@@ -414,6 +442,10 @@ def main():
                 ("Total overpayment", total_overpayment),
                 ("Total lump", total_lump),
                 ("Total difference (unattributed)", total_difference),
+                # Phase 12 / S2: overpayment cap headline for the as-of month.
+                ("Overpayment cap allowance (as-of)", cap_allowance),
+                ("Overpayment cap headroom (as-of)", cap_headroom),
+                ("Overpayment cap status (as-of)", cap_flag),
                 ("Portal-style principal (excl. unposted interest)", portal["principal_excl_unposted"]),
                 ("Portal YTD interest (posted + accrual to yesterday)", portal["ytd_interest_portal"]),
                 ("Property value (as-of)", prop_val),
@@ -438,6 +470,10 @@ def main():
                 "Total overpayment",
                 "Total lump",
                 "Total difference (unattributed)",
+                # Phase 12 / S2: the cap allowance and headroom are money; the
+                # cap status is text and needs no number format.
+                "Overpayment cap allowance (as-of)",
+                "Overpayment cap headroom (as-of)",
             }
             pct_keys = {"LTV (as-of)", "Current annual rate"}
             date_keys = {"As of date (latest bank actual)", "Next payment date"}

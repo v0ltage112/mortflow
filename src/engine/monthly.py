@@ -65,13 +65,36 @@ extra. Both keep a legacy fallback: a file with no contracts still reads
 Property B/C samples stay byte-identical. Property A (converted to contracts)
 reproduces its retired rate windows and its month-17 / EUR200 standing extra
 exactly, so the Gandon golden does not move.
+
+Phase 12 / S1 note: ``build_monthly_schedule`` takes one more collector,
+``month_cap_allowance`` (the per-payment BOI overpayment-cap allowance in euro
+resolved read-only in the daily loop from the contract in effect), and emits it
+as the new ``overpayment_cap_allowance_eur`` column. Additive: it adds a single
+column and changes no existing column or value, so the golden master diffs to
+exactly that one new column (re-baselined at S3). A month with no resolvable
+allowance carries a null, distinct from a real zero.
+
+Phase 12 / S2 note: three more additive columns join the schedule beside the S1
+allowance, and no collector or signature changes because all three derive from
+figures the assembly already has. ``overpayment_cap_headroom_eur`` is that
+month's allowance minus the month's recognised voluntary overpayment (the Phase
+7 ``overpayment`` figure). The basis is per payment, not cumulative across a
+year, because the BOI cap does not roll over and has no calendar reset, so each
+month is measured against its own allowance. ``overpayment_cap_flag`` labels the
+month ok / approaching / breached via ``overpayment_cap_flag`` using the single
+``OVERPAYMENT_CAP_APPROACHING_THRESHOLD`` constant, so the amber trip point is
+retuned in one place. ``overpayment_cumulative_eur`` is a lifetime running total
+of the recognised voluntary overpayment, emitted for context only and never fed
+back into the headroom or the flag. Both cap figures are null in months with no
+resolvable allowance, keeping "unknown" distinct from a real zero. Additive:
+three new columns, no conserved figure moves, re-baselined at S3.
 """
 
 from __future__ import annotations
 
 import sys
 from datetime import date
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -87,6 +110,27 @@ from .calendar_ie import adjust_for_convention, CONVENTION_DAY_CLAMP
 
 
 # =====================================================================
+# Overpayment-cap flag policy (Phase 12 / S2)
+# =====================================================================
+# The "approaching" threshold for the per-payment overpayment-cap flag,
+# expressed as a fraction of that month's allowance. A month whose recognised
+# voluntary overpayment reaches this fraction of its allowance (without
+# exceeding it) is flagged "approaching"; strictly above the allowance is
+# "breached"; below the fraction is "ok". This is a display/policy knob, not a
+# lender term, so it deliberately lives here as one named constant. To retune
+# the amber trip point, change this single value (e.g. 0.80 for an earlier
+# warning).
+OVERPAYMENT_CAP_APPROACHING_THRESHOLD = 0.90
+
+# The flag vocabulary, defined once so every consumer (the per-property summary
+# sheet and the portfolio rollup) reads these labels off the monthly schedule
+# rather than recomputing the flag or hard-coding the strings.
+OVERPAYMENT_CAP_FLAG_OK = "ok"
+OVERPAYMENT_CAP_FLAG_APPROACHING = "approaching"
+OVERPAYMENT_CAP_FLAG_BREACHED = "breached"
+
+
+# =====================================================================
 # Monthly scaffolding
 # =====================================================================
 
@@ -94,7 +138,7 @@ def build_rate_lookup(blocks: List[RateBlock]):
     """Return a callable mapping model month numbers to annual rates.
 
     Finance note: the loan's rate changes at refix dates. This turns the list of
-    rate blocks into a quick \"what rate applies in month N?\" lookup that drives
+    rate blocks into a quick "what rate applies in month N?" lookup that drives
     daily interest.
 
     Phase 10 / S2: retained unchanged as the legacy fallback. ``rate_lookup_for``
@@ -131,8 +175,8 @@ def rate_lookup_for(inputs: Inputs):
     """Return a callable mapping model month numbers to annual rates.
 
     Finance note: the rate path is now contract-driven. Each contract's date
-    span becomes a model-month window, giving the same \"what rate applies in
-    month N?\" lookup the legacy rate_blocks provided. A file with no contracts
+    span becomes a model-month window, giving the same "what rate applies in
+    month N?" lookup the legacy rate_blocks provided. A file with no contracts
     (the still-legacy Property B/C samples) falls back to the rate_blocks path,
     so those runs stay byte-identical.
     """
@@ -301,6 +345,40 @@ def month_tables(inputs: Inputs, actuals: pd.DataFrame) -> pd.DataFrame:
 # Monthly schedule assembly (post daily loop)
 # =====================================================================
 
+def overpayment_cap_flag(overpayment_used: float, allowance_eur: Optional[float]) -> Optional[str]:
+    """Return the per-payment overpayment-cap flag for a single month.
+
+    Finance note: compares the month's recognised voluntary overpayment against
+    that month's BOI allowance. The BOI cap is per payment, does not roll over,
+    and has no calendar reset, so each month stands on its own: the month is
+    "breached" once the overpayment exceeds the allowance, "approaching" once it
+    reaches OVERPAYMENT_CAP_APPROACHING_THRESHOLD of the allowance (but does not
+    exceed it), and "ok" below that. Returns None when the allowance is
+    unresolvable, so "unknown" never reads as free headroom.
+
+    Technical note: pure and read-only. It derives a label from two numbers and
+    touches no simulation state. The amber trip point is the single module
+    constant OVERPAYMENT_CAP_APPROACHING_THRESHOLD, so retuning it is a one-line
+    edit that this and every consumer inherit.
+    """
+    # No resolvable allowance: the flag is unknown, kept distinct from "ok".
+    if allowance_eur is None:
+        return None
+    used = float(overpayment_used or 0.0)
+    # A non-positive allowance cannot be meaningfully approached: any positive
+    # overpayment against it is a breach, otherwise there is nothing to flag.
+    if allowance_eur <= 0.0:
+        return OVERPAYMENT_CAP_FLAG_BREACHED if used > 0.0 else OVERPAYMENT_CAP_FLAG_OK
+    # Strictly above the allowance is a breach.
+    if used > allowance_eur:
+        return OVERPAYMENT_CAP_FLAG_BREACHED
+    # At or above the approaching fraction of the allowance (but not over it).
+    if used >= OVERPAYMENT_CAP_APPROACHING_THRESHOLD * allowance_eur:
+        return OVERPAYMENT_CAP_FLAG_APPROACHING
+    # Comfortable headroom below the amber trip point.
+    return OVERPAYMENT_CAP_FLAG_OK
+
+
 def build_monthly_schedule(
     months: pd.DataFrame,
     events_df: pd.DataFrame,
@@ -311,6 +389,7 @@ def build_monthly_schedule(
     month_interest_used: Dict[int, float],
     month_rate: Dict[int, float],
     month_contractual: Dict[int, float],
+    month_cap_allowance: Dict[int, Optional[float]],
     payment_unattributed_ok_abs_eur: float = 0.01,
 ) -> pd.DataFrame:
     """Assemble the final per-month schedule after the daily loop has run.
@@ -320,19 +399,24 @@ def build_monthly_schedule(
     payment, any standing extra, any lump sum, and the interest charged, derives
     the principal repaid, records the interest posting date, and lines up the
     month-end balances for both the model and the bank so the two can be
-    compared. It also reports the contractual baseline for the month: the agreed
+    compared. It also reports the contractual baseline for the month (the agreed
     instalment where the bank has confirmed one, otherwise the model's projected
-    payment. These rows drive the Monthly schedule sheet and the tax outputs.
+    payment), the per-payment BOI overpayment-cap allowance in euro, and, from
+    Phase 12 / S2, how much of that allowance the month's voluntary overpayment
+    uses (the headroom and an ok/approaching/breached flag). These rows drive the
+    Monthly schedule sheet and the tax outputs.
 
     Technical note: pure relocation of the post-loop assembly from
-    ``run_engine``, plus the Phase 7 / S2 additive column. The per-month
-    collector dicts (``month_paid``, ``month_extras``, ``month_lumps``,
-    ``month_interest_used``, ``month_rate``, ``month_contractual``) are passed in
+    ``run_engine``, plus the Phase 7 / S2 additive contractual column, the Phase
+    12 / S1 additive cap-allowance column, and the Phase 12 / S2 additive
+    headroom / flag / cumulative columns. The per-month collector dicts
+    (``month_paid``, ``month_extras``, ``month_lumps``, ``month_interest_used``,
+    ``month_rate``, ``month_contractual``, ``month_cap_allowance``) are passed in
     explicitly so this module never reaches back into ``simulate``. As before,
     it mutates ``events_df`` in place by adding the ``ym`` helper column used to
     align events to their calendar month; this matches the pre-S3 behaviour
-    exactly. ``contractual_payment`` is appended only; no existing column or
-    value changes.
+    exactly. The new columns are appended only; no existing column or value
+    changes.
 
     Phase 7 / S3 note: this assembly now also emits the principled attribution
     split. ``total_paid`` is the full monthly debit (the sum of the legacy
@@ -346,12 +430,42 @@ def build_monthly_schedule(
     ``overpayment_mismatch`` flags an actual-payment month whose Difference
     exceeds ``payment_unattributed_ok_abs_eur``. All four are derived from
     figures the daily loop already settled, so no conserved quantity moves.
+
+    Phase 12 / S1 note: ``overpayment_cap_allowance_eur`` is the per-payment BOI
+    overpayment-cap allowance in euro for the month, resolved in the daily loop
+    from the contract in effect (max(percent * instalment, floor_eur) under the
+    rule in force on the contract start_date). It is a null in months with no
+    resolvable allowance (no profile, no stated instalment, no cap rule, or a
+    non-payment month), keeping "unknown" distinct from a real zero.
+
+    Phase 12 / S2 note: three more additive columns are emitted from figures
+    already in hand, so the signature is unchanged. ``overpayment_cap_headroom_eur``
+    is the month's allowance minus its recognised voluntary overpayment (the
+    Phase 7 ``overpayment`` figure); a positive value is room left under the cap
+    and a negative value is the amount over it. The basis is per payment (the
+    BOI cap does not roll over and has no calendar reset), so each month is
+    judged against its own allowance rather than a running annual pool.
+    ``overpayment_cap_flag`` is the ok / approaching / breached label from
+    ``overpayment_cap_flag`` (a single module threshold constant governs amber),
+    computed once here so the summary sheet and the rollup only read it.
+    ``overpayment_cumulative_eur`` is a lifetime running total of the recognised
+    voluntary overpayment, emitted for context only and never fed into the
+    headroom or the flag. Both cap-derived figures are null where the allowance
+    is unresolvable, so "unknown" stays distinct from a real zero. Additive:
+    three new columns, no conserved figure moves, re-baselined at S3.
     """
     # Plain-English progress line for troubleshooting (stderr only; never stdout).
     print(
         f"[engine.monthly] build_monthly_schedule: assembling {len(months)} monthly rows",
         file=sys.stderr,
     )
+
+    # Phase 12 / S2: a lifetime running total of the recognised voluntary
+    # overpayment, emitted per month for context only. Months are assembled in
+    # calendar order (month_tables builds them over an ascending month_span), so
+    # a simple carried accumulator gives the correct cumulative on each row. It
+    # never feeds the per-payment headroom or the flag.
+    running_overpayment_cumulative = 0.0
 
     # Per-month frame build ----------------------------------------------------
     rows = []
@@ -405,6 +519,41 @@ def build_monthly_schedule(
             r.has_actual_payment and abs(payment_unattributed) > payment_unattributed_ok_abs_eur
         )
 
+        # ---------------- OVERPAYMENT-CAP ALLOWANCE (Phase 12 / S1) ----------------
+        # The per-payment BOI voluntary-overpayment allowance in euro for this
+        # month, resolved in the daily loop from the contract in effect
+        # (max(percent * instalment, floor_eur) under the rule in force on the
+        # contract start_date). None (no profile, no stated instalment, no cap
+        # rule, or a non-payment month) is emitted as a null so "unknown" stays
+        # distinct from a real zero. Additive: one new column, no existing figure
+        # changes.
+        _cap_allowance = month_cap_allowance[ymkey]
+        overpayment_cap_allowance_eur = (
+            None if _cap_allowance is None else round(float(_cap_allowance), 2)
+        )
+
+        # ---------------- OVERPAYMENT-CAP HEADROOM & FLAG (Phase 12 / S2) ----------------
+        # Per-payment basis: measure this month's recognised voluntary
+        # overpayment (the Phase 7 overpayment figure above) against this month's
+        # allowance. The BOI cap does not roll over and has no calendar reset, so
+        # each month is judged on its own allowance rather than a running annual
+        # pool. Headroom is the allowance minus the used amount (positive is room
+        # left, negative is the amount over the cap); the flag is
+        # ok / approaching / breached from overpayment_cap_flag. Both are null
+        # when the allowance is unresolvable, so "unknown" never reads as free
+        # headroom.
+        cap_used = overpayment  # the Phase 7 recognised voluntary overpayment for the month
+        if overpayment_cap_allowance_eur is None:
+            overpayment_cap_headroom_eur = None
+        else:
+            overpayment_cap_headroom_eur = round(overpayment_cap_allowance_eur - cap_used, 2)
+        overpayment_cap_flag_value = overpayment_cap_flag(cap_used, overpayment_cap_allowance_eur)
+
+        # Lifetime running total of the recognised voluntary overpayment (context
+        # only; it does not affect the per-payment headroom or the flag above).
+        running_overpayment_cumulative = round(running_overpayment_cumulative + overpayment, 2)
+        overpayment_cumulative_eur = running_overpayment_cumulative
+
         rows.append(dict(
             ym=ymkey,
             month_start=r.month_start,
@@ -423,6 +572,16 @@ def build_monthly_schedule(
             total_paid=total_paid,
             difference=payment_unattributed,
             overpayment_mismatch=overpayment_mismatch,
+            # Phase 12 / S1: additive per-payment cap allowance in euro (null
+            # where unresolvable). Does not feed the attribution split above.
+            overpayment_cap_allowance_eur=overpayment_cap_allowance_eur,
+            # Phase 12 / S2: additive per-payment headroom, ok/approaching/breached
+            # flag, and a context-only lifetime cumulative. Headroom and flag are
+            # null where the allowance is unresolvable. None of these feed the
+            # attribution split.
+            overpayment_cap_headroom_eur=overpayment_cap_headroom_eur,
+            overpayment_cap_flag=overpayment_cap_flag_value,
+            overpayment_cumulative_eur=overpayment_cumulative_eur,
             interest_used=round(interest_used, 2),
             principal_paid=round(principal, 2),
             annual_rate=month_rate[ymkey],

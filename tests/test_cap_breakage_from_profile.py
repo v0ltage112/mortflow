@@ -1,5 +1,5 @@
 # tests/test_cap_breakage_from_profile.py
-"""Tests for the Phase 10 / S3 profile-derived overpayment cap and breakage.
+"""Tests for the profile-derived overpayment cap and breakage.
 
 These lock the retirement of the scalar ``overpayment_cap_pct`` and its
 replacement by profile-derived resolvers:
@@ -8,20 +8,28 @@ replacement by profile-derived resolvers:
   max(percent of the monthly instalment, EUR floor) using the rule in force on
   the contract's start_date (LP4/LP7), and None when unresolvable.
 * ``resolve_breakage_reference`` returns the catalogued formula and flags the
-  charge \"not computable\" when the external R%/R1% money-market rates are absent
+  charge "not computable" when the external R%/R1% money-market rates are absent
   (LP5/LP6).
 * The strict-baseline sanitiser strips the new per-contract standing_overpayment
   and the lump_sums overlay so a strict baseline stays contract-only.
 
-None of these figures is consumed for an output number, so the golden master
-stays byte-identical (see test_golden_master.py). See docs/lender_profile.md and
-docs/contract_data_model.md Section B.
+Phase 12 / S1 note: the overpayment-cap allowance is no longer reference-only.
+The daily loop now emits it as the additive ``overpayment_cap_allowance_eur``
+monthly column, so these tests also lock the real per-contract euro figures
+(Gandon A1 212.34; Somerton B2 143.39 stepping to B3 182.38 at the refix) and
+that ``build_monthly_schedule`` surfaces the column, carrying a null where the
+allowance is unresolvable. The additive column moves the golden fixtures by
+exactly one column, re-baselined at S3; see test_golden_master.py. See
+docs/lender_profile.md and docs/contract_data_model.md Section B.
 """
 
 from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
+
+from src.engine.monthly import build_monthly_schedule
 from src.engine.profile import parse_lender_profile
 from src.engine.schema import (
     BreakageReference,
@@ -121,6 +129,103 @@ def test_cap_allowance_none_when_unresolvable():
     # A contract with no stated instalment has no monthly figure to take a % of.
     open_contract = Contract(id="A3", start_date=date(2032, 4, 1), rate=0.04, instalment=None)
     assert overpayment_cap_for_contract(prof, open_contract) is None
+
+
+# ----------------- overpayment cap: real per-contract euro figures -----------
+# Phase 12 / S1: the allowance is now an emitted output number, so lock the
+# real Gandon and Somerton figures and the step at the Somerton refix.
+
+def test_cap_allowance_real_gandon_contract():
+    """Gandon A1: 10% of the EUR 2123.44 instalment gives the EUR 212.34 allowance."""
+    prof = _sample_profile()
+    gandon_a1 = Contract(
+        id="gandon-a1",
+        start_date=date(2024, 3, 26),
+        end_date=date(2028, 3, 26),
+        rate=0.0365,
+        instalment=2123.44,
+    )
+    allowance = overpayment_cap_for_contract(prof, gandon_a1)
+    assert allowance is not None
+    assert round(allowance, 2) == 212.34
+
+
+def test_cap_allowance_tracks_somerton_refix():
+    """Somerton B2 -> B3: the allowance follows the active contract's instalment."""
+    prof = _sample_profile()
+    somerton_b2 = Contract(
+        id="somerton-b2",
+        start_date=date(2022, 6, 23),
+        end_date=date(2026, 6, 23),
+        rate=0.0190,
+        instalment=1433.91,
+    )
+    somerton_b3 = Contract(
+        id="somerton-b3",
+        start_date=date(2026, 6, 24),
+        end_date=date(2030, 6, 23),
+        rate=0.0310,
+        instalment=1823.78,
+    )
+    b2_allowance = overpayment_cap_for_contract(prof, somerton_b2)
+    b3_allowance = overpayment_cap_for_contract(prof, somerton_b3)
+    assert b2_allowance is not None and round(b2_allowance, 2) == 143.39
+    assert b3_allowance is not None and round(b3_allowance, 2) == 182.38
+    # The refix lifts the allowance because the instalment steps up.
+    assert b3_allowance > b2_allowance
+
+
+# ----------------- overpayment cap: emitted on the monthly schedule ----------
+
+def _month_row(ym, month_start, pay_date, eom_date):
+    """A minimal month_tables-shaped row for build_monthly_schedule."""
+    return dict(
+        ym=ym,
+        month_start=month_start,
+        pay_date=pay_date,
+        eom=eom_date,
+        actual_interest_post_date=None,
+        actual_interest_amount=0.0,
+        has_actual_payment=False,
+        recurring_extra=0.0,
+    )
+
+
+def test_monthly_schedule_emits_cap_allowance_column():
+    """build_monthly_schedule surfaces the per-payment cap allowance as a column.
+
+    Two modelled months carry a resolved allowance; a third (a closed month with
+    no resolvable allowance) carries None, which must land as a pandas null so
+    "unknown" stays distinct from a real zero.
+    """
+    months = pd.DataFrame([
+        _month_row(202406, date(2024, 6, 1), date(2024, 6, 5), date(2024, 6, 30)),
+        _month_row(202407, date(2024, 7, 1), date(2024, 7, 5), date(2024, 7, 31)),
+        _month_row(202408, date(2024, 8, 1), date(2024, 8, 5), date(2024, 8, 31)),
+    ])
+    zeros = {202406: 0.0, 202407: 0.0, 202408: 0.0}
+    contractual = {202406: 2123.44, 202407: 2123.44, 202408: 0.0}
+    rate = {202406: 0.0365, 202407: 0.0365, 202408: 0.0365}
+    # The daily loop resolved an allowance for the two payment months and None
+    # for the closed month.
+    cap_allowance = {202406: 212.34, 202407: 212.34, 202408: None}
+
+    monthly = build_monthly_schedule(
+        months,
+        pd.DataFrame(columns=["date", "kind", "amount", "balance"]),
+        pd.DataFrame(),
+        dict(zeros), dict(zeros), dict(zeros), dict(zeros),
+        rate,
+        contractual,
+        cap_allowance,
+    )
+
+    assert "overpayment_cap_allowance_eur" in monthly.columns
+    vals = list(monthly.sort_values("ym")["overpayment_cap_allowance_eur"])
+    assert vals[0] == 212.34
+    assert vals[1] == 212.34
+    # None becomes a pandas null in the emitted column.
+    assert pd.isna(vals[2])
 
 
 # --------------------------- breakage reference ------------------------------

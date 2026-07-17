@@ -52,6 +52,21 @@ instalment. Every branch keeps a legacy fallback (rate_blocks,
 known_first_payment, and the contractual_ladder) for files with no contracts,
 so the still-legacy Property B/C samples are unchanged and Property A's schedule
 is byte-identical to the pre-migration model.
+
+Phase 12 / S1 note: the daily loop now also captures the per-payment BOI
+overpayment-cap allowance in euro. On each payment day it resolves
+``overpayment_cap_for_contract(inputs.profile, contract_in_effect)`` (the Phase
+10 reference-only resolver: max(percent * instalment, floor_eur) under the rule
+in force on the contract start_date) into a new ``month_cap_allowance``
+collector, threaded through ``DailyRunResult`` to ``build_monthly_schedule``,
+which emits it as the additive ``overpayment_cap_allowance_eur`` monthly column.
+This is read-only with respect to the loan maths: it never touches the balance,
+the debit applied, the carried-forward base payment, or the interest posting, so
+every existing figure stays byte-identical to v2.1.0. The allowance follows the
+active contract, so it steps at a refix (Somerton B2 -> B3). A month with no
+resolvable allowance (no profile, no stated instalment, or no cap rule in force)
+records None, kept distinct from a real zero. The new column shifts the golden
+fixtures by exactly that one column, re-baselined at S3.
 """
 
 from __future__ import annotations
@@ -72,7 +87,7 @@ from .helpers import (
     pmt,
     ym_int,
 )
-from .schema import Inputs
+from .schema import Inputs, overpayment_cap_for_contract
 from .valuation import property_value_on
 from .monthly import (
     build_rate_lookup,
@@ -210,12 +225,17 @@ class DailyRunResult:
     reaches into loop internals. ``months`` is the prepared month table the
     monthly assembly needs; the dicts are the per-``YYYYMM`` collectors the
     loop populates (amounts paid, recurring extras, lump sums, interest used,
-    the annual rate applied each month, and the Phase 7 / S2 contractual
-    baseline).
+    the annual rate applied each month, the Phase 7 / S2 contractual baseline,
+    and the Phase 12 / S1 overpayment-cap allowance).
 
     Phase 7 / S2 adds ``month_contractual``: the agreed (or projected)
     contractual instalment recorded per ``YYYYMM`` on each payment day, used to
     build the additive ``contractual_payment`` monthly column.
+
+    Phase 12 / S1 adds ``month_cap_allowance``: the per-payment BOI
+    overpayment-cap allowance in euro recorded per ``YYYYMM`` on each payment
+    day (or None where unresolvable), used to build the additive
+    ``overpayment_cap_allowance_eur`` monthly column.
     """
     months: pd.DataFrame
     events: List[Dict]
@@ -225,6 +245,7 @@ class DailyRunResult:
     month_interest_used: Dict[int, float]
     month_rate: Dict[int, float]
     month_contractual: Dict[int, float]
+    month_cap_allowance: Dict[int, Optional[float]]
 
 
 def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
@@ -242,8 +263,10 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
     / S2 adds a read-only contractual-baseline capture on payment days (see the
     CONTRACTUAL BASELINE block). Phase 10 / S2 sources the rate lookup from
     ``rate_lookup_for`` (contracts, with a rate_blocks fallback) and the
-    contractual baseline from the contract in effect (with the ladder fallback);
-    neither mutates any simulation state.
+    contractual baseline from the contract in effect (with the ladder fallback).
+    Phase 12 / S1 adds a read-only overpayment-cap-allowance capture on payment
+    days (see the OVERPAYMENT-CAP ALLOWANCE block). None of these captures
+    mutates any simulation state.
     """
     rate_of = rate_lookup_for(inputs)
     months = month_tables(inputs, actuals)
@@ -292,6 +315,12 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
     # Seeded at zero for every month and populated on payment days. Additive and
     # read-only: it never feeds back into the balance or any conserved total.
     month_contractual: Dict[int, float] = {int(r.ym): 0.0 for _, r in months.iterrows()}
+    # Phase 12 / S1: per-payment BOI overpayment-cap allowance in euro, keyed by
+    # YYYYMM. Seeded None (not 0.0) so \"no allowance resolved\" stays distinct
+    # from a real zero, and populated on payment days from the contract in
+    # effect. Additive and read-only: it never feeds back into the balance or
+    # any conserved total.
+    month_cap_allowance: Dict[int, Optional[float]] = {int(r.ym): None for _, r in months.iterrows()}
 
     # Event log (only days where something happens).
     events: List[Dict] = []
@@ -380,6 +409,22 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
                     )
             month_contractual[ym] = round(contractual_today, 2)
 
+        # ---------------- OVERPAYMENT-CAP ALLOWANCE (Phase 12 / S1) ----------------
+        # On a payment day, compute the BOI voluntary-overpayment allowance in
+        # euro for the contract in effect: max(percent * instalment, floor_eur)
+        # from the lender profile's rule in force on the contract start_date
+        # (see schema.overpayment_cap_for_contract). This promotes the Phase 10
+        # reference-only resolver to an emitted figure. It is read-only: it never
+        # changes the balance, the debit applied, the carried-forward base, or
+        # the interest posting, so no existing monthly figure moves. The
+        # allowance follows the active contract, so it steps at a refix. None
+        # (no profile, no stated instalment, or no cap rule) is preserved as-is
+        # so \"unknown\" stays distinct from \"no headroom\".
+        if is_payment_day:
+            cap_contract = _contract_for_month(inputs, mnum)
+            allowance = overpayment_cap_for_contract(inputs.profile, cap_contract)
+            month_cap_allowance[ym] = None if allowance is None else round(allowance, 2)
+
         # Logic to calculate potential interest posting amount
         interest_to_post = 0.0
         should_post_interest = False
@@ -402,7 +447,7 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
             should_post_interest = False  # Consumed
 
         # ---------------- DEBITS ----------------
-        # Apply debits in the order Payment → Extra → Lump to mirror the intent
+        # Apply debits in the order Payment -> Extra -> Lump to mirror the intent
         # of the inputs and make the later \"trim\" logic deterministic.
         # STRICT ROUNDING: All debits must be 2 decimal places before hitting the balance.
         payment_today = round(payment_today, 2)
@@ -489,6 +534,7 @@ def _simulate_daily(inputs: Inputs, actuals: pd.DataFrame) -> DailyRunResult:
         month_interest_used=month_interest_used,
         month_rate=month_rate,
         month_contractual=month_contractual,
+        month_cap_allowance=month_cap_allowance,
     )
 
 
@@ -516,9 +562,10 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     Technical note: thinned in Phase 5 / S5. The setup and the daily loop now
     live in ``_simulate_daily``; this function consumes its ``DailyRunResult``
     and calls ``build_monthly_schedule``, ``property_value_on``, and
-    ``build_reconcile`` in the same order as before, so the returned tuple and
-    its columns are unchanged apart from the additive Phase 7 / S2
-    ``contractual_payment`` column passed through to the monthly assembly.
+    ``build_reconcile`` in the same order as before. Phase 7 / S2 added the
+    additive ``contractual_payment`` column and Phase 12 / S1 the additive
+    ``overpayment_cap_allowance_eur`` column, both passed through to the monthly
+    assembly; every other returned column is unchanged.
     """
     # Plain-English progress line for troubleshooting (stderr only; never stdout).
     print("[engine.simulate] run_engine: starting daily simulation", file=sys.stderr)
@@ -549,7 +596,8 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
     # Monthly schedule, posting dates, and EOM balances are assembled in the
     # monthly module.  The per-month collector dicts populated by the daily
     # loop are passed in explicitly so monthly.py never reaches back here. The
-    # Phase 7 / S2 contractual collector rides along to emit contractual_payment.
+    # Phase 7 / S2 contractual collector and the Phase 12 / S1 cap-allowance
+    # collector ride along to emit their additive columns.
     monthly = build_monthly_schedule(
         sim.months,
         events_df,
@@ -560,6 +608,7 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
         sim.month_interest_used,
         sim.month_rate,
         sim.month_contractual,
+        sim.month_cap_allowance,
         # Phase 7 / S3: the dedicated tolerance that decides when an actual
         # month is flagged as not reconciling to the agreed split.
         payment_unattributed_ok_abs_eur=inputs.payment_unattributed_ok_abs_eur,
