@@ -76,3 +76,103 @@ def test_contract_rate_lookup_matches_windows():
     # A3 months 98+ at 4.00% (open-ended tail).
     assert math.isclose(rate_of(98), 0.0400, abs_tol=1e-12)
     assert math.isclose(rate_of(420), 0.0400, abs_tol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# REVIEW-001: contract contiguity validation.
+# ---------------------------------------------------------------------------
+
+def _write_inputs(tmp_path, contracts):
+    """Write a minimal contracts inputs file and return its path."""
+    import yaml
+
+    raw = {
+        "meta": {"property_id": "t", "name": "T", "kind": "investment"},
+        "loan": {
+            "property_id": "t",
+            "lender": "boi",
+            "drawdown_amount": 100000,
+            "drawdown_date": "2024-01-01",
+            "total_term_months": 120,
+            "property_value": 150000,
+            "repayment_day": 5,
+            "first_payment_date": "2024-02-05",
+            "contracts": contracts,
+        },
+    }
+    p = tmp_path / "inputs.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return p
+
+
+def test_contiguous_contracts_load(tmp_path):
+    """A contiguous contracts array (each starts the day after the prior ends) loads."""
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "end_date": "2026-01-01", "rate": 0.03},
+        {"id": "C2", "start_date": "2026-01-02", "end_date": "2028-01-01", "rate": 0.04},
+        {"id": "C3", "start_date": "2028-01-02", "rate": 0.045},
+    ])
+    inputs = load_inputs(p)
+    assert [c.id for c in inputs.contracts] == ["C1", "C2", "C3"]
+
+
+def test_contract_gap_raises(tmp_path):
+    """REVIEW-001: a gap between contracts is a config error, not a silent borrow."""
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "end_date": "2026-01-01", "rate": 0.03},
+        # C2 starts two days after C1 ends: a one-day gap.
+        {"id": "C2", "start_date": "2026-01-03", "rate": 0.04},
+    ])
+    import pytest
+
+    with pytest.raises(ValueError, match="not contiguous"):
+        load_inputs(p)
+
+
+def test_contract_overlap_raises(tmp_path):
+    """REVIEW-001: an overlap between contracts is a config error."""
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "end_date": "2026-01-01", "rate": 0.03},
+        # C2 starts before C1 ends: an overlap.
+        {"id": "C2", "start_date": "2025-12-31", "rate": 0.04},
+    ])
+    import pytest
+
+    with pytest.raises(ValueError, match="not contiguous"):
+        load_inputs(p)
+
+
+def test_open_ended_contract_before_last_raises(tmp_path):
+    """REVIEW-001: only the final contract may be open-ended."""
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},  # open-ended, not last
+        {"id": "C2", "start_date": "2026-01-02", "rate": 0.04},
+    ])
+    import pytest
+
+    with pytest.raises(ValueError, match="only the final contract may be open-ended"):
+        load_inputs(p)
+
+
+# ---------------------------------------------------------------------------
+# REVIEW-004: a missing lender profile warns rather than degrading silently.
+# ---------------------------------------------------------------------------
+
+def test_missing_lender_profile_warns(tmp_path, capsys):
+    """REVIEW-004: a lender key with no profile warns on stderr and still loads."""
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},
+    ])
+    # Point the lender at a key with no discoverable profile beside the inputs.
+    import yaml
+
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    raw["loan"]["lender"] = "no_such_lender"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    inputs = load_inputs(p)
+    captured = capsys.readouterr()
+    # The run still loads (not fatal), but the warning names the missing profile.
+    assert inputs.profile is None
+    assert "no_such_lender" in captured.err
+    assert "not found" in captured.err

@@ -876,7 +876,7 @@ golden fixture re-baselined.
 
 ### REVIEW-001: Contract date-gap months silently use the last contract's rate
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 10)
 
@@ -889,24 +889,22 @@ Verified at runtime: a gap month returned A3's rate (0.04), not A1's or A2's.
 There is no contiguity validation on the contracts array.
 
 #### Reason not now
-The bundled samples are contiguous, so no live figure is affected. This is a
-robustness gap for hand-edited configs.
-
+-
 #### Likely outcome
-A gap either raises a clear config error or is explicitly filled by a documented
-rule, rather than silently borrowing the last contract's rate.
+A gap or overlap is a clear config error rather than a silent mis-price.
 
 #### Build notes
-Validate contiguity in `_resolve_contracts` (each contract's `start_date` is the
-day after the prior `end_date`), or make `rate_lookup_for` raise on an uncovered
-month. Add a test with a deliberate gap.
+**Done 2026-09-26** on branch `fix/review-medium`. Added
+`_validate_contract_contiguity` in `schema.py`, called from `_resolve_contracts`:
+each contract must start the day after the previous one ends, and only the final
+contract may be open-ended. A gap, an overlap, or an early open-ended contract
+raises `ValueError` with the offending ids and dates. The bundled samples are
+contiguous, so **no golden fixture was re-baselined**. Four tests added.
 
 #### Promotion trigger
-Before any hand-authored multi-contract config is relied on, or at Phase 13 / S3
-when perturbations touch contract rates.
-
+-
 #### Related records
-`src/engine/monthly.py`; `src/engine/schema.py`; `docs/contract_data_model.md`.
+`src/engine/monthly.py`; `src/engine/schema.py`; `tests/test_contracts_repoint.py`.
 
 ---
 
@@ -973,7 +971,7 @@ Before Phase 13 scenarios perturb contracts.
 
 ### REVIEW-004: A missing lender profile silently disables cap, breakage, and convention
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 10 / Phase 12)
 
@@ -985,19 +983,19 @@ the cap is an emitted output figure, so a missing profile now blanks a reported
 number rather than only a reference.
 
 #### Reason not now
-The bundled sample profile resolves, so no live figure is affected.
-
+-
 #### Likely outcome
-A missing profile for a declared `lender` key warns (or raises) rather than
-silently degrading the run.
+A missing profile for a declared `lender` key warns rather than silently
+degrading the run.
 
 #### Build notes
-Emit a warning to stderr when a `lender` key is present but no profile resolves;
-consider a strict mode that raises.
+**Done 2026-09-26** on branch `fix/review-medium`. `load_inputs` now prints an
+actionable warning to stderr naming the lender key and the search directory when
+no profile resolves, while still loading (not fatal). No output figure changes,
+so **no golden fixture was re-baselined**. One test added.
 
 #### Promotion trigger
-Before real-data runs depend on the cap figure.
-
+-
 #### Related records
 `src/engine/schema.py`; `src/engine/profile.py`; REVIEW-008.
 
@@ -1032,7 +1030,7 @@ Raise `ValueError` with the offending value, matching the strictness of
 
 ### REVIEW-006: Somerton cap test uses synthetic figures, not the real data
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 12)
 
@@ -1045,15 +1043,14 @@ Gandon figure is real; the Somerton pair is not, so the test does not lock the
 real data.
 
 #### Reason not now
-The golden master still catches a change to B's instalments.
-
+-
 #### Likely outcome
-The test asserts the real Property B figures, or its docstring stops claiming
-they are real.
+The test asserts the real Property B figures.
 
 #### Build notes
-Update the two instalments and the two expected allowances to the real sample
-values, or reword the docstring.
+**Done 2026-09-26** on branch `fix/review-medium`. The test now uses the real
+sample instalments `1218.82` / `1550.21` and asserts the real allowances
+`121.88` / `155.02`, matching the golden fixtures. Docstring updated.
 
 #### Promotion trigger
 -
