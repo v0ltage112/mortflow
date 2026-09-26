@@ -27,7 +27,7 @@
 | Data + out path | Private, outside the repo, linked via git-ignored `paths.local.yaml` (see `START_AGENT.md`) |
 | Old private repo | `github.com/v0ltage112/mortgage-model` (archived) |
 | Test count at last ship | 171 passed / 4 skipped / 0 failed (Phase 12, `v2.2.0`) |
-| Test count now | 173 passed / 4 skipped / 0 failed (after BACKLOG-001 fix) |
+| Test count now | 194 passed / 4 skipped / 0 failed (after BACKLOG-001/002/005 fixes) |
 
 ---
 
@@ -97,11 +97,17 @@ These were found during the 2026-09-26 review and are logged in
    derives its as-of date from config (`valuation.as_of_date`, else
    `modelling.end_date`) instead of `date.today()`. Suite is green: 173 passed /
    4 skipped / 0 failed. The golden fixture was **not** re-baselined.
-2. `tests/test_overpayment_cap_headroom.py` is committed but **empty (0 bytes)**.
+2. ~~`tests/test_overpayment_cap_headroom.py` is committed but **empty (0 bytes)**.~~
+   **FIXED 2026-09-26** (BACKLOG-002): 18 tests authored, locking the flag
+   boundaries, headroom maths, the 90% trip point, the null passthrough, and the
+   cumulative total.
 3. `Path.read_text()` without explicit `encoding="utf-8"` in several modules.
 4. Duplicated `_VALUATION_ONLY_KINDS`, `_slugify`, and tax date helpers.
-5. `assert` used for input validation in `tools/portfolio.py`.
-6. README version history stops at v2.1.0 (v2.2.0 missing); test count stale.
+5. ~~`assert` used for input validation in `tools/portfolio.py`.~~ **FIXED
+   2026-09-26** (BACKLOG-005): now raises `ValueError` with an actionable
+   message; 3 tests added.
+6. ~~README version history stops at v2.1.0 (v2.2.0 missing); test count stale.~~
+   **FIXED 2026-09-26** (BACKLOG-007): v2.2.0 row added; test count corrected.
 
 ---
 

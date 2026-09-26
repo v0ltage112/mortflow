@@ -167,3 +167,36 @@ def test_only_flag_still_filters_the_discovered_set(tmp_path, monkeypatch):
 
     only_disabled = _run_portfolio(manifest, tmp_path / "run_only_disabled", monkeypatch, only="Manifest Test C")
     assert only_disabled.empty
+# --------------------------- manifest validation -----------------------------
+
+def test_load_portfolio_raises_valueerror_when_properties_missing(tmp_path):
+    """A manifest with no 'properties' list raises ValueError, not AssertionError.
+
+    Regression guard for BACKLOG-005. The check used to be an ``assert``, which
+    Python strips under ``python -O``, so the guard could silently disappear.
+    It must now raise a real exception with an actionable message.
+    """
+    import pytest
+
+    bad = tmp_path / "portfolio.yaml"
+    bad.write_text("portfolio_name: no properties here\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="properties"):
+        portfolio.load_portfolio(bad)
+
+
+def test_load_portfolio_raises_valueerror_when_properties_not_a_list(tmp_path):
+    """A 'properties' key that is not a list is also rejected."""
+    import pytest
+
+    bad = tmp_path / "portfolio.yaml"
+    bad.write_text("properties: not-a-list\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="properties"):
+        portfolio.load_portfolio(bad)
+
+
+def test_load_portfolio_accepts_a_valid_manifest(tmp_path):
+    """A well-formed manifest loads without error."""
+    good = tmp_path / "portfolio.yaml"
+    good.write_text("properties:\n  - name: X\n", encoding="utf-8")
+    raw = portfolio.load_portfolio(good)
+    assert isinstance(raw["properties"], list)
