@@ -434,29 +434,31 @@ Promoted into Phase 13 / S5.
 
 ### BACKLOG-001: Fix time-dependent golden master
 
-Status: READY
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-`tools/portfolio.py::_valuation_summary_row` uses `date.today()` for
-`as_of_date` and grows Property C's value to today, so
-`tests/fixtures/golden/portfolio_summary.csv` drifts daily. The suite currently
-reports **1 failed, 170 passed, 4 skipped**.
+`tools/portfolio.py::_valuation_summary_row` used `date.today()` for
+`as_of_date` and grew Property C's value to today, so
+`tests/fixtures/golden/portfolio_summary.csv` drifted daily. The suite reported
+**1 failed, 170 passed, 4 skipped**.
 
 #### Reason not now
-Not Phase 13 scope, but it blocks a green baseline and should be fixed first.
-
+-
 #### Likely outcome
 A deterministic golden master that passes on any date.
 
 #### Build notes
-Mirror the mortgage path's `_derive_as_of`, or accept an explicit `--as-of`
-override. Re-baseline `portfolio_summary.csv` once.
+**Done 2026-09-26** on branch `fix/golden-master-determinism`. Added
+`_derive_valuation_as_of` (config-driven: `valuation.as_of_date`, else
+`modelling.end_date`); `_valuation_summary_row` takes the date as a parameter.
+The sample pins `as_of_date: 2026-07-17`, so the golden value is unchanged and
+**no fixture was re-baselined**. Two regression tests added. Suite: 173 passed /
+4 skipped / 0 failed.
 
 #### Promotion trigger
-Immediate — recommended as the next bounded change.
-
+-
 #### Related records
 `AGENT_STATUS.md` (known defects); `DECISIONS_AND_LEARNINGS.md` (L1).
 

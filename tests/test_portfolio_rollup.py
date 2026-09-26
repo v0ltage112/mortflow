@@ -108,6 +108,56 @@ def test_rollup_property_c_is_valuation_only(rollup):
     assert pd.isna(row["payoff_date"])
 
 
+def test_valuation_only_as_of_is_config_driven_not_today():
+    """A valuation-only row's as-of date comes from config, never the wall clock.
+
+    Regression guard for BACKLOG-001. The rollup previously used
+    ``date.today()`` for a valuation-only property, so the locked
+    ``portfolio_summary.csv`` fixture drifted every day and the golden master
+    failed as soon as the calendar moved past the capture date. The date must
+    now be derived from the property's own config (``valuation.as_of_date``,
+    else ``modelling.end_date``), so the output is reproducible on any day.
+    """
+    import datetime as _dt
+
+    from tools.portfolio import _derive_valuation_as_of
+
+    inputs_path = (
+        Path(__file__).resolve().parent.parent
+        / "data_sample"
+        / "property_c"
+        / "inputs.sample.yaml"
+    )
+    as_of = _derive_valuation_as_of(inputs_path)
+    # The sample pins an explicit date, so the result is that exact date.
+    assert as_of == _dt.date(2026, 7, 17)
+    # And it is emphatically not "today", which is what made the fixture drift.
+    assert as_of != _dt.date.today()
+
+
+def test_valuation_only_as_of_falls_back_to_modelling_end(tmp_path):
+    """Without ``valuation.as_of_date`` the as-of falls back to ``modelling.end_date``.
+
+    Proves the deterministic fallback path, so a config that omits the explicit
+    date still produces a reproducible rollup rather than reaching for the clock.
+    """
+    import datetime as _dt
+
+    from tools.portfolio import _derive_valuation_as_of
+
+    cfg = tmp_path / "inputs.yaml"
+    cfg.write_text(
+        "valuation:\n"
+        "  base_date: 2020-01-01\n"
+        "  base_value: 1000000\n"
+        "  growth_pa: 0.03\n"
+        "modelling:\n"
+        "  end_date: 2040-06-01\n",
+        encoding="utf-8",
+    )
+    assert _derive_valuation_as_of(cfg) == _dt.date(2040, 6, 1)
+
+
 def test_currency_totals_keep_eur_and_pkr_separate(rollup):
     """The per-currency totals file has one row per currency, and each total
     is exactly the sum of that currency's own native_value values.

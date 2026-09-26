@@ -507,7 +507,48 @@ def _mortgage_summary_row(
     return _finalize_currency_fields(row, currency)
 
 
-def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: bool, currency: str) -> Dict:
+def _derive_valuation_as_of(inputs_path: Path) -> Optional[_dt.date]:
+    """Return the deterministic as-of date for a valuation-only property.
+
+    A valuation-only property has no bank feed, so there is no observed
+    "latest actual" to anchor the snapshot the way ``_derive_as_of`` does for a
+    mortgage property. The date therefore comes from the property's own config,
+    in this order:
+
+    1. ``valuation.as_of_date`` when set (explicit and deterministic).
+    2. ``modelling.end_date``, the projection horizon (deterministic fallback).
+
+    Returns None only when neither is available, in which case the caller falls
+    back to the final schedule row and its own month.
+
+    This replaces an earlier ``date.today()`` call. That call made the rollup,
+    and therefore the golden master, change every day: the locked
+    ``portfolio_summary.csv`` fixture drifted as soon as the wall clock moved
+    past the date it was captured on. Deriving the date from config keeps the
+    output reproducible on any machine on any day.
+    """
+    try:
+        raw = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
+    except Exception:
+        # A missing or malformed inputs file is not fatal here: the caller
+        # falls back to the final schedule row.
+        raw = {}
+    raw = raw or {}
+    # An explicit valuation.as_of_date wins; otherwise use the modelling horizon.
+    as_of = _to_date((raw.get("valuation") or {}).get("as_of_date"))
+    if as_of is not None:
+        return as_of
+    return _to_date((raw.get("modelling") or {}).get("end_date"))
+
+
+def _valuation_summary_row(
+    csv_dir: Path,
+    name: str,
+    kind: str,
+    tax_enabled: bool,
+    currency: str,
+    as_of: Optional[_dt.date] = None,
+) -> Dict:
     """Build one locked portfolio-summary row for a valuation-only property.
 
     Phase 11 / S3: property_value is always set to the native figure here; the
@@ -517,19 +558,31 @@ def _valuation_summary_row(csv_dir: Path, name: str, kind: str, tax_enabled: boo
     Phase 12 / S2: a valuation-only property has no loan, so the three
     overpayment-cap columns are simply omitted here and the reindex fills them
     blank, exactly like every other loan-only column.
+
+    Determinism (BACKLOG-001): ``as_of`` is supplied by the caller from
+    ``_derive_valuation_as_of`` (config-driven), never from the wall clock. The
+    snapshot is the last schedule month on or before ``as_of``. When ``as_of``
+    is None the final schedule row is used and its own month becomes the
+    reported date, so the row is still fully deterministic.
     """
     val_csv = csv_dir / "valuation_schedule.csv"
     if not val_csv.exists():
         raise FileNotFoundError(f"Expected valuation CSV missing: {val_csv}")
     sched = pd.read_csv(val_csv, parse_dates=["month_start"])
-    today = _dt.date.today()
     month_starts = sched["month_start"].apply(_to_date)
-    mask = month_starts.apply(lambda d: d is not None and d <= today)
-    current = sched.loc[mask].iloc[-1] if mask.any() else sched.iloc[-1]
+    if as_of is not None:
+        # Snapshot at the last month on or before the configured as-of date.
+        mask = month_starts.apply(lambda d: d is not None and d <= as_of)
+        current = sched.loc[mask].iloc[-1] if mask.any() else sched.iloc[-1]
+        snapshot_date = as_of
+    else:
+        # No configured date: use the final schedule row and its own month.
+        current = sched.iloc[-1]
+        snapshot_date = _to_date(current["month_start"])
     native_value = float(current["property_value"])
 
     row: Dict = {
-        "as_of_date": today,
+        "as_of_date": snapshot_date,
         "property_name": name,
         "property_kind": kind,
         "tax_enabled": tax_enabled,
@@ -580,7 +633,10 @@ def main():
 
         if _is_valuation_only(p):
             run_engine_cli(inputs_path, None, out_dir)
-            rows.append(_valuation_summary_row(csv_dir, name, kind, tax_enabled, currency))
+            # Determinism (BACKLOG-001): the as-of date comes from the property's
+            # own config, not the wall clock, so the rollup is reproducible.
+            val_as_of = _derive_valuation_as_of(inputs_path)
+            rows.append(_valuation_summary_row(csv_dir, name, kind, tax_enabled, currency, val_as_of))
             continue
 
         actuals_path = resolve_relative(args.portfolio, p["actuals"])

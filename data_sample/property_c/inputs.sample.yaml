@@ -26,6 +26,12 @@ valuation:
   base_date: 2020-01-01         # date the base value is anchored from (fictitious)
   base_value: 10000000          # property value on base_date, in PKR (fictitious)
   growth_pa: 0.035              # flat annual growth (3.5%); a bare 3.5 is also read as 3.5%
+  # Deterministic snapshot date for the portfolio rollup (BACKLOG-001). A
+  # valuation-only property has no bank feed, so the rollup cannot derive an
+  # as-of date from observed actuals the way a mortgage property does. This
+  # value pins the rollup snapshot so the golden master is reproducible on any
+  # machine on any day. Omit it to fall back to modelling.end_date.
+  as_of_date: 2026-07-17
   cost_basis_value: 10800000     # PKR total invested (transfer ledger total below); reference only, never grown
   cost_basis_note: "Token + final payment + transfer fee + broker fee + broker commission/lawyer"
   # Optional revaluations: pin a new value and/or growth rate from a later date.
