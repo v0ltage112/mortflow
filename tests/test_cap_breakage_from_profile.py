@@ -151,26 +151,31 @@ def test_cap_allowance_real_gandon_contract():
 
 
 def test_cap_allowance_tracks_somerton_refix():
-    """Somerton B2 -> B3: the allowance follows the active contract's instalment."""
+    """Somerton B2 -> B3: the allowance follows the active contract's instalment.
+
+    REVIEW-006: the instalments and expected allowances are the real Property B
+    sample figures (data_sample/property_b/inputs.sample.yaml), so this test
+    locks the actual data rather than synthetic values.
+    """
     prof = _sample_profile()
     somerton_b2 = Contract(
         id="somerton-b2",
         start_date=date(2022, 6, 23),
         end_date=date(2026, 6, 23),
         rate=0.0190,
-        instalment=1433.91,
+        instalment=1218.82,
     )
     somerton_b3 = Contract(
         id="somerton-b3",
         start_date=date(2026, 6, 24),
         end_date=date(2030, 6, 23),
         rate=0.0310,
-        instalment=1823.78,
+        instalment=1550.21,
     )
     b2_allowance = overpayment_cap_for_contract(prof, somerton_b2)
     b3_allowance = overpayment_cap_for_contract(prof, somerton_b3)
-    assert b2_allowance is not None and round(b2_allowance, 2) == 143.39
-    assert b3_allowance is not None and round(b3_allowance, 2) == 182.38
+    assert b2_allowance is not None and round(b2_allowance, 2) == 121.88
+    assert b3_allowance is not None and round(b3_allowance, 2) == 155.02
     # The refix lifts the allowance because the instalment steps up.
     assert b3_allowance > b2_allowance
 

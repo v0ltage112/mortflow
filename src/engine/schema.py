@@ -90,8 +90,9 @@ keep an inert ``overpayment_cap_pct`` key, which the loader now ignores.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -820,7 +821,49 @@ def _resolve_contracts(loan: dict) -> List[Contract]:
             )
         )
     out.sort(key=lambda k: k.start_date)
+    _validate_contract_contiguity(out)
     return out
+
+
+def _validate_contract_contiguity(contracts: List[Contract]) -> None:
+    """Reject a contracts array with a gap or an overlap between contracts.
+
+    Finance note: the rate path is built from each contract's date span, and a
+    month not covered by any contract silently borrows the final contract's
+    rate (REVIEW-001). A gap or an overlap is therefore a config error, not a
+    modelling choice, so it is caught here rather than mis-priced later. Each
+    contract must start on the day after the previous one ends; only the final
+    contract may be open-ended (no end_date).
+
+    Technical note: a single contract, or an empty list, is always valid. The
+    check is skipped for a contract with no end_date that is not the last one,
+    because an open-ended contract in the middle would swallow every later
+    contract; that is reported as its own error.
+    """
+    for i, contract in enumerate(contracts):
+        is_last = i == len(contracts) - 1
+        if contract.end_date is None:
+            # Only the final contract may be open-ended; an earlier open-ended
+            # contract would make every later contract unreachable.
+            if not is_last:
+                raise ValueError(
+                    f"contract {contract.id!r} has no end_date but is not the last "
+                    f"contract; only the final contract may be open-ended"
+                )
+            continue
+        if is_last:
+            # The final contract may be closed; nothing follows it to check.
+            continue
+        nxt = contracts[i + 1]
+        expected = contract.end_date + timedelta(days=1)
+        if nxt.start_date != expected:
+            raise ValueError(
+                f"contracts are not contiguous: {contract.id!r} ends "
+                f"{contract.end_date} but {nxt.id!r} starts {nxt.start_date}; "
+                f"expected {nxt.id!r} to start {expected} (the day after the "
+                f"previous contract ends). Fix the dates so the rate path has "
+                f"no gap or overlap."
+            )
 
 
 def _resolve_loan_v2(loan: dict, contracts: List[Contract], meta: PropertyMeta) -> Optional[Loan]:
@@ -974,8 +1017,17 @@ def load_inputs(path: Path) -> Inputs:
         try:
             profile = resolve_lender_profile(str(lender), lenders_dir)
         except FileNotFoundError:
-            # A lender key without a discoverable profile is not fatal: the
-            # profile stays None so the parse never breaks a run.
+            # REVIEW-004: a lender key with no discoverable profile is not fatal
+            # (the parse must not break a run), but it silently disables the
+            # overpayment cap, the breakage reference, and the Modified
+            # Following payment-date convention. Since Phase 12 the cap is an
+            # emitted figure, so warn loudly rather than degrade in silence.
+            print(
+                f"[engine.schema] warning: lender profile {lender!r} not found "
+                f"under {lenders_dir}; the overpayment cap, breakage reference, "
+                f"and payment-date convention will be unavailable for this run",
+                file=sys.stderr,
+            )
             profile = None
 
     # Phase 10 / S2: when the new-schema contracts array is present (loan_v2
