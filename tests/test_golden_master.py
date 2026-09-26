@@ -360,6 +360,97 @@ def test_root_csv_locked(generated_out: Path, rel_name: str) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# REVIEW-010: lock the workbook Summary numbers.
+# ---------------------------------------------------------------------------
+# The CSV golden master above locks the schedule and rollup figures, but the
+# per-property workbook Summary sheet (as-of balance, current rate, next
+# payment, cap state, portal metrics, property value, LTV) was only shape-checked
+# by test_output_structure.py. A regression in a Summary figure would therefore
+# pass the suite. These fixtures lock the Summary metric/value pairs per
+# property, so a presentation regression is caught like any other number.
+SUMMARY_SCOPES = ["property-a", "property-b", "property-c"]
+SUMMARY_FILE = "summary.csv"
+
+
+def _read_summary_pairs(workbook_path: Path) -> list[tuple[str, str]]:
+    """Return the Summary sheet's (metric, value) pairs as normalised strings.
+
+    Dates become ISO strings and numbers keep their full precision, so the
+    comparison is exact and independent of Excel's display formatting.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(workbook_path, read_only=True)
+    try:
+        ws = wb["Summary"]
+        pairs: list[tuple[str, str]] = []
+        for metric, value in ws.iter_rows(values_only=True):
+            if hasattr(value, "date"):          # a datetime: normalise to ISO date
+                value = value.date().isoformat()
+            elif value is None:
+                value = ""
+            else:
+                value = str(value)
+            pairs.append((str(metric), value))
+        return pairs
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("scope", SUMMARY_SCOPES)
+def test_workbook_summary_locked(generated_out: Path, scope: str) -> None:
+    """Each property's workbook Summary matches its committed fixture exactly.
+
+    REVIEW-010: the Summary is the headline sheet a reader opens first, so its
+    figures are locked here rather than left to the shape-only structure test.
+    The fixture is a two-column (metric, value) CSV captured from the sample
+    pipeline; a moved figure fails with the metric name and both values.
+    """
+    workbook = generated_out / scope / f"{scope}_model.xlsx"
+    assert workbook.exists(), (
+        f"{scope}: the pipeline did not produce {workbook.name}. "
+        "The engine run itself may have failed."
+    )
+    expected_path = GOLDEN_DIR / scope / SUMMARY_FILE
+    assert expected_path.exists(), (
+        f"{scope}: no locked Summary fixture at {expected_path}. "
+        "Re-capture the fixtures before running the test."
+    )
+
+    actual = _read_summary_pairs(workbook)
+    # Both the produced sheet and the fixture carry a header row ("Metric",
+    # "Value"); drop it so only the metric/value pairs are compared.
+    actual = [(m, v) for m, v in actual if m != "Metric"]
+    expected_rows = pd.read_csv(expected_path, keep_default_na=False, dtype=str)
+    expected = [
+        (row[0], row[1])
+        for row in expected_rows.itertuples(index=False)
+        if str(row[0]) != "Metric"
+    ]
+
+    # Compare metric by metric so a failure names the exact row that moved.
+    actual_map = dict(actual)
+    expected_map = dict(expected)
+    problems: list[str] = []
+    for metric, exp_value in expected_map.items():
+        if metric not in actual_map:
+            problems.append(f"  '{metric}': missing from the produced Summary")
+        elif actual_map[metric] != exp_value:
+            problems.append(
+                f"  '{metric}': locked '{exp_value}', produced '{actual_map[metric]}'"
+            )
+    for metric in actual_map:
+        if metric not in expected_map:
+            problems.append(f"  '{metric}': new metric not in the locked fixture")
+
+    if problems:
+        raise AssertionError(
+            f"{scope}: the workbook Summary drifted from the locked figures.\n"
+            + "\n".join(problems)
+        )
+
+
 @pytest.mark.parametrize("scope", sorted(BASELINE_INPUTS_SCOPES))
 def test_effective_inputs_yaml_byte_equal(generated_out: Path, scope: str) -> None:
     """The baseline effective-inputs snapshot is locked byte-for-byte, per scope.

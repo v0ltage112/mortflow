@@ -1098,7 +1098,7 @@ When the live-position cap view is needed beyond the first contract.
 
 ### REVIEW-008: The cap flag cannot see an unagreed overpayment
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 7 / Phase 12)
 
@@ -1110,22 +1110,23 @@ the cap via the bank) therefore leaves the flag at "ok". For a feature whose
 purpose is to flag cap breaches, this is a meaningful gap.
 
 #### Reason not now
-The agreed-terms split is deliberate (Phase 7); changing what feeds the flag is
-a behaviour decision.
-
+-
 #### Likely outcome
-The flag considers the total voluntary overpayment (agreed plus the unattributed
-excess), or a second flag reports the observed breach.
+A flag that reflects the money actually overpaid.
 
 #### Build notes
-Decide the definition, then feed `overpayment + max(0, difference)` (or a
-dedicated observed-overpayment figure) into `overpayment_cap_flag`; re-baseline.
+**Done 2026-09-26** on branch `fix/review-priority`. `build_monthly_schedule`
+now measures the cap against `overpayment + max(0, difference)` (the agreed
+extra plus any positive unattributed excess; a negative Difference is an
+underpayment and is floored at zero). In the bundled samples the Difference is
+zero in every allowance month, so **no golden fixture was re-baselined**. Two
+regression tests added (`test_cap_flag_sees_an_unagreed_bank_overpayment`,
+`test_cap_flag_ignores_an_underpayment`).
 
 #### Promotion trigger
-Before the cap flag is relied on for real bank data.
-
+-
 #### Related records
-`src/engine/monthly.py`; `src/engine/simulate.py`.
+`src/engine/monthly.py`; `src/engine/simulate.py`; `tests/test_overpayment_cap_headroom.py`.
 
 ---
 
@@ -1161,7 +1162,7 @@ Cap the recognised overpayment at the month's remaining debit in
 
 ### REVIEW-010: The golden master does not lock workbook Summary numbers
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 4 / Phase 8)
 
@@ -1173,19 +1174,19 @@ locked: `test_output_structure.py` checks sheet names and order only. A
 regression in a Summary figure would pass the suite.
 
 #### Reason not now
-The Summary is presentation over figures already locked in the CSVs.
-
+-
 #### Likely outcome
-The Summary's key figures are locked (a small golden fixture or targeted
-assertions), so a presentation regression is caught.
+The Summary's key figures are locked, so a presentation regression is caught.
 
 #### Build notes
-Add a golden fixture of the Summary metric/value pairs per property, or assert
-the headline figures against the monthly schedule.
+**Done 2026-09-26** on branch `fix/review-priority`. Added a `summary.csv`
+fixture per property (`tests/fixtures/golden/<scope>/summary.csv`) and a
+`test_workbook_summary_locked` case in `test_golden_master.py` that compares the
+produced Summary metric/value pairs exactly. Verified non-vacuous: corrupting a
+fixture fails the test. No existing fixture changed.
 
 #### Promotion trigger
-Before the Summary is relied on as the headline deliverable.
-
+-
 #### Related records
 `tests/test_golden_master.py`; `tests/test_output_structure.py`; `src/engine/__main__.py`.
 

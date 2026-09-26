@@ -261,3 +261,74 @@ def test_schedule_cumulative_does_not_feed_the_flag():
         OVERPAYMENT_CAP_FLAG_APPROACHING,
         OVERPAYMENT_CAP_FLAG_APPROACHING,
     ]
+
+
+# --------------------------- REVIEW-008: observed overpayment ----------------
+
+def _build_with_debit(months, contractual, cap_allowance, paid):
+    """Assemble a schedule where the month's debit exceeds the agreed split.
+
+    The excess lands in the Difference residual, exactly as a real bank-side
+    overpayment does. ``paid`` is the full monthly debit per ``ym``.
+    """
+    rate = {int(r["ym"]): 0.0365 for r in months}
+    zeros = {int(r["ym"]): 0.0 for r in months}
+    return build_monthly_schedule(
+        pd.DataFrame(months),
+        pd.DataFrame(columns=["date", "kind", "amount", "balance"]),
+        pd.DataFrame(),
+        dict(paid), dict(zeros), dict(zeros), dict(zeros),
+        rate,
+        contractual,
+        cap_allowance,
+    )
+
+
+def test_cap_flag_sees_an_unagreed_bank_overpayment():
+    """REVIEW-008: a bank-side overpayment beyond the agreed extra still flags.
+
+    The agreed standing extra is 200.00, but the borrower actually paid 500.00
+    through the bank, so 300.00 lands in the Difference residual. The cap is a
+    limit on money actually overpaid, so the month must read "breached" against
+    the 212.34 allowance, not "approaching" on the agreed 200.00 alone.
+    """
+    months = [
+        _month_row(202406, date(2024, 6, 1), date(2024, 6, 5), date(2024, 6, 30), recurring_extra=200.0),
+    ]
+    contractual = {202406: 2123.44}
+    cap_allowance = {202406: 212.34}
+    # The bank debited 2423.44 = 2123.44 contractual + 200 agreed + 100 unagreed.
+    paid = {202406: 2423.44}
+
+    monthly = _build_with_debit(months, contractual, cap_allowance, paid)
+    row = monthly.iloc[0]
+
+    # The unagreed 100.00 sits in the Difference residual.
+    assert row["difference"] == 100.0
+    # Used = 200 agreed + 100 unagreed = 300, over the 212.34 allowance.
+    assert row["overpayment_cap_headroom_eur"] == round(212.34 - 300.0, 2)
+    assert row["overpayment_cap_flag"] == OVERPAYMENT_CAP_FLAG_BREACHED
+
+
+def test_cap_flag_ignores_an_underpayment():
+    """A negative Difference is an underpayment, not an overpayment.
+
+    The borrower paid less than the agreed split, so the Difference is negative.
+    That must not be treated as negative overpayment (which would inflate the
+    headroom); the used amount floors the Difference at zero.
+    """
+    months = [
+        _month_row(202406, date(2024, 6, 1), date(2024, 6, 5), date(2024, 6, 30), recurring_extra=200.0),
+    ]
+    contractual = {202406: 2123.44}
+    cap_allowance = {202406: 212.34}
+    # The bank debited 2000.00, less than the agreed 2323.44 split.
+    paid = {202406: 2000.0}
+
+    monthly = _build_with_debit(months, contractual, cap_allowance, paid)
+    row = monthly.iloc[0]
+
+    assert row["difference"] < 0
+    # Used stays at the agreed 200.00, so headroom is unchanged at 12.34.
+    assert row["overpayment_cap_headroom_eur"] == 12.34
+    assert row["overpayment_cap_flag"] == OVERPAYMENT_CAP_FLAG_APPROACHING

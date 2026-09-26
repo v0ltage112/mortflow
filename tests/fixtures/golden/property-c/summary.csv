@@ -1,0 +1,13 @@
+Metric,Value
+Property,PROPERTY C
+Property kind,owned_outright
+Base valuation date,2020-01-01
+Base value,10000000
+Cost basis (invested),10800000
+Unrecoverable acquisition cost,800000
+Annual growth,0.035
+Modelling end date,2045-01-01
+Value at base date,10000000
+Value at horizon,23632449.84
+Months modelled,301
+LTV,n/a (no mortgage)

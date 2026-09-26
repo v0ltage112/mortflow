@@ -1,0 +1,21 @@
+Metric,Value
+As of date (latest bank actual),2026-06-15
+Bank running balance (as-of),483079.15
+Model balance same date,483068.61
+Difference (model - bank),-10.54000000003725
+Current annual rate,0.0365
+Next payment date,2026-07-06
+Next payment amount,2323.44
+YTD interest (posted only),7338.97
+YTD principal (posted only),4278.23
+Total contractual paid,806125.8399999999
+Total overpayment,71600
+Total lump,0
+Total difference (unattributed),-1648.11
+Overpayment cap allowance (as-of),212.34
+Overpayment cap headroom (as-of),12.34
+Overpayment cap status (as-of),approaching
+Portal-style principal (excl. unposted interest),483068.61
+Portal YTD interest (posted + accrual to yesterday),8016.43
+Property value (as-of),587822.8242969483
+LTV (as-of),0.8218108076660268
