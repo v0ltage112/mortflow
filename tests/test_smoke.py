@@ -70,7 +70,7 @@ def test_portal_snapshot_principal_within_50(engine_outputs, inputs, inputs_path
     portal = compute_portal_style_metrics(portal_snapshot_date, inputs, events, monthly)
     model_principal = portal["principal_excl_unposted"]
     assert model_principal is not None, "Portal-style principal not computed."
-    raw = yaml.safe_load(Path(inputs_path).read_text())
+    raw = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
     snaps = (raw.get("reconcile") or {}).get("snapshots") or []
     latest = max(snaps, key=lambda s: str(s["date"]))
     bank_balance = float(latest["balance"])

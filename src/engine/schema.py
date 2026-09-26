@@ -430,6 +430,21 @@ class Inputs:
     clone = copy
 
 
+def _as_bool(value, default: bool = False) -> bool:
+    """Coerce a YAML value to a bool, reading quoted strings correctly.
+
+    Finance note: YAML ``false`` parses to a real bool, but a quoted ``"false"``
+    parses to the non-empty string ``"false"``, which ``bool()`` would read as
+    True. This normalises the common truthy/falsy spellings so a quoted flag
+    never silently flips a module on or off.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _resolve_kind(raw_kind: Optional[str]) -> str:
     """Normalise a user-entered kind to one of the canonical kinds.
 
@@ -485,12 +500,13 @@ def _resolve_meta(raw: dict) -> PropertyMeta:
 
     def _toggle(name: str) -> bool:
         # Explicit override wins, in either the bare ('tax') or suffixed
-        # ('tax_enabled') spelling; otherwise inherit the kind default.
+        # ('tax_enabled') spelling; otherwise inherit the kind default. A quoted
+        # string flag ('false') is read as a bool, not as a truthy non-empty str.
         if meta_raw.get(name) is not None:
-            return bool(meta_raw[name])
+            return _as_bool(meta_raw[name], defaults[name])
         alt = f"{name}_enabled"
         if meta_raw.get(alt) is not None:
-            return bool(meta_raw[alt])
+            return _as_bool(meta_raw[alt], defaults[name])
         return defaults[name]
 
     return PropertyMeta(
@@ -573,7 +589,8 @@ def _resolve_payment_holidays(bank_cfg: dict) -> List[PaymentHoliday]:
                 f"use one of {sorted(_VALID_PAYMENT_HOLIDAY_MODES)}"
             )
         # 'capitalise' defaults to True: unpaid interest is normally rolled up.
-        capitalise = bool(ph.get("capitalise", True))
+        # Read as a bool so a quoted 'false' does not flip to True.
+        capitalise = _as_bool(ph.get("capitalise", True), True)
         holidays.append(PaymentHoliday(start=start, end=end, mode=mode, capitalise=capitalise))
     return holidays
 

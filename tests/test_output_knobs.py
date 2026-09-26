@@ -53,7 +53,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _load_raw(inputs_path: Path) -> dict:
     """Read the property's YAML into a plain dict for editing in a test."""
-    return yaml.safe_load(Path(inputs_path).read_text())
+    return yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
 
 
 def _write_tmp_inputs(raw: dict, tmp_path: Path) -> Path:

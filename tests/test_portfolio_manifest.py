@@ -34,7 +34,7 @@ def _write_manifest(path: Path, properties: list) -> None:
     'properties' list. No 'output' block is set, so the rollup falls back to
     tools.portfolio.DEFAULT_CSV_SUBDIR.
     """
-    path.write_text(yaml.safe_dump({"properties": properties}))
+    path.write_text(yaml.safe_dump({"properties": properties}), encoding="utf-8")
 
 
 def _run_portfolio(manifest_path: Path, out_dir: Path, monkeypatch, only: Optional[str] = None) -> pd.DataFrame:

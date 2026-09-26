@@ -8,7 +8,7 @@
 > implement a backlog item unless it is explicitly **PROMOTED** into
 > `PRODUCT_DELIVERY_PLAN.md`.
 
-**Last updated:** 2026-09-26
+**Last updated:** 2026-09-26 (phase audit findings REVIEW-000..016 added and groomed)
 
 ---
 
@@ -702,6 +702,12 @@ Twelve places catch any exception. Two swallow the error silently with `pass`:
 `src/engine/__main__.py:249` and `tools/portfolio.py:314`. Catching everything
 can hide a real bug and let a run continue with a wrong or missing result.
 
+**Groomed 2026-09-26:** the phase audit found two more silent sites in the same
+family, `tools/portfolio.py::_derive_as_of` and `_derive_valuation_as_of`, which
+swallow any exception while reading the inputs YAML and fall back to `{}` (a
+malformed file yields a blank as-of date with no warning). These are folded into
+this item; REVIEW-015 is closed as a duplicate.
+
 #### Reason not now
 Not Phase 13 scope; the paths are not currently triggering.
 
@@ -794,3 +800,557 @@ Consistent line length.
 -
 #### Related records
 PEP 8.
+
+---
+
+## Phase audit findings (2026-09-26)
+
+> A detailed, evidence-based review of every completed phase (0-12) against its
+> claimed deliverable, its outputs, and its robustness. Phase 13 is active and
+> was **not** reviewed. Two trivial defects were fixed inline on branch
+> `review/phase-audit-2026-09-26` (see REVIEW-000); the rest are logged here and
+> are **not** authorised for implementation.
+
+### Grooming summary (2026-09-26)
+
+All 17 items were reviewed for duplication and status consistency. One duplicate
+was folded into an existing item; the rest are distinct.
+
+| Item | Severity | Status | Note |
+| --- | --- | --- | --- |
+| REVIEW-000 | fixed | PROMOTED | 3 trivial defects fixed inline on the audit branch |
+| REVIEW-001 | medium | CANDIDATE | contract date gaps |
+| REVIEW-002 | low | CANDIDATE | mid-month refix |
+| REVIEW-003 | low | CANDIDATE | empty `contracts: []` |
+| REVIEW-004 | medium | CANDIDATE | missing lender profile |
+| REVIEW-005 | low | CANDIDATE | bad `repayment_day` |
+| REVIEW-006 | medium | CANDIDATE | synthetic Somerton test figures |
+| REVIEW-007 | medium | CANDIDATE | cap blank for most of term |
+| REVIEW-008 | **high** | CANDIDATE | cap flag blind to unagreed overpayment |
+| REVIEW-009 | low | CANDIDATE | payoff-month attribution |
+| REVIEW-010 | **high** | CANDIDATE | Summary numbers not golden-locked |
+| REVIEW-011 | low | CANDIDATE | per-currency totals not locked |
+| REVIEW-012 | low | CANDIDATE | `csv_subdir` path escape |
+| REVIEW-013 | low | CANDIDATE | silent bad boolean string |
+| REVIEW-014 | low | CANDIDATE | missing `actuals` reroutes |
+| REVIEW-015 | - | REJECTED | duplicate of NEW-2; folded in |
+| REVIEW-016 | low | CANDIDATE | valuation anchor fallback |
+
+**Suggested first fix pass (not authorised):** REVIEW-008 and REVIEW-010, then
+REVIEW-001 and REVIEW-004.
+
+### REVIEW-000: Defects fixed inline during the audit
+
+Status: PROMOTED
+Captured: 2026-09-26
+Source: phase audit
+
+#### Context
+Two trivial, low-risk defects were found and fixed on the audit branch, each
+verified against the full suite (194 passed / 4 skipped / 0 failed) and with no
+golden fixture re-baselined.
+
+#### Build notes
+**Done 2026-09-26** on `review/phase-audit-2026-09-26`:
+1. **Quoted string booleans read as truthy** (`src/engine/schema.py`). A quoted
+   `tax: "false"` in the `meta` block produced `tax_enabled=True`, because
+   `bool("false")` is `True`; the same pattern affected the payment-holiday
+   `capitalise` flag. Added a shared `_as_bool` helper and used it in
+   `_resolve_meta` and `_resolve_payment_holidays`. No sample uses quoted
+   booleans, so the golden is unaffected.
+2. **Non-deterministic workbook table names** (`src/engine/report.py`).
+   `_add_table` built the Excel table name from `abs(hash((ws.title, ref)))`;
+   Python's `hash()` is salted per process, so the `.xlsx` bytes differed
+   between runs. Replaced with `zlib.crc32`, which is stable across processes.
+   This directly contradicted the product's determinism guarantee.
+3. **Test-file encodings** (`tests/`). Nine `read_text()` / `write_text()` calls
+   in seven test files omitted `encoding="utf-8"`, the same locale-dependent
+   defect BACKLOG-003 fixed in `src/` and `tools/` but missed in `tests/`.
+
+#### Promotion trigger
+-
+#### Related records
+`src/engine/schema.py`; `src/engine/report.py`; BACKLOG-003.
+
+---
+
+### REVIEW-001: Contract date-gap months silently use the last contract's rate
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 10)
+
+#### Context
+`rate_lookup_for` / `_contract_month_ranges` build a rate window per contract
+and fall through to `contracts[-1].rate` for any model month not covered by a
+window. A gap between two contracts (for example A1 ends Feb 2028, A2 starts
+May 2028) therefore applies the **final** contract's rate to the gap months.
+Verified at runtime: a gap month returned A3's rate (0.04), not A1's or A2's.
+There is no contiguity validation on the contracts array.
+
+#### Reason not now
+The bundled samples are contiguous, so no live figure is affected. This is a
+robustness gap for hand-edited configs.
+
+#### Likely outcome
+A gap either raises a clear config error or is explicitly filled by a documented
+rule, rather than silently borrowing the last contract's rate.
+
+#### Build notes
+Validate contiguity in `_resolve_contracts` (each contract's `start_date` is the
+day after the prior `end_date`), or make `rate_lookup_for` raise on an uncovered
+month. Add a test with a deliberate gap.
+
+#### Promotion trigger
+Before any hand-authored multi-contract config is relied on, or at Phase 13 / S3
+when perturbations touch contract rates.
+
+#### Related records
+`src/engine/monthly.py`; `src/engine/schema.py`; `docs/contract_data_model.md`.
+
+---
+
+### REVIEW-002: Mid-month refix double-claims a model month
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 10)
+
+#### Context
+`month_index` is month-granular, so a contract starting mid-month and the prior
+contract ending mid-month both map to the same model month. `rate_lookup_for`
+returns the first matching window, so the new rate is delayed by up to a month.
+The samples use month boundaries, so they are unaffected.
+
+#### Reason not now
+No live impact on the bundled data.
+
+#### Likely outcome
+A documented, tested rule for which contract owns a shared month (for example
+the later contract wins), or a warning when a boundary is mid-month.
+
+#### Build notes
+Decide the tie-break, encode it in `_contract_month_ranges`, and add a test with
+a mid-month refix.
+
+#### Promotion trigger
+When a real refix lands mid-month.
+
+#### Related records
+`src/engine/monthly.py`; `src/engine/helpers.py` (`month_index`).
+
+---
+
+### REVIEW-003: `contracts: []` is treated as a legacy file
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 10)
+
+#### Context
+`_resolve_loan_v2` returns `None` when the `contracts` array is empty, so a file
+that declares `contracts: []` silently falls back to the legacy `rate_blocks`
+keys rather than erroring. A user who empties the array by mistake gets the old
+model with no warning.
+
+#### Reason not now
+No live impact; the samples always carry contracts.
+
+#### Likely outcome
+An empty `contracts:` array is a config error when the mortgage module is on.
+
+#### Build notes
+Distinguish "no `contracts:` key" (legacy) from "`contracts:` present but empty"
+(error) in `_resolve_loan_v2`.
+
+#### Promotion trigger
+Before Phase 13 scenarios perturb contracts.
+
+#### Related records
+`src/engine/schema.py`.
+
+---
+
+### REVIEW-004: A missing lender profile silently disables cap, breakage, and convention
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 10 / Phase 12)
+
+#### Context
+`load_inputs` catches `FileNotFoundError` from `resolve_lender_profile` and sets
+`profile=None`. That silently disables the overpayment cap, the breakage
+reference, and the Modified Following payment-date convention. Since Phase 12
+the cap is an emitted output figure, so a missing profile now blanks a reported
+number rather than only a reference.
+
+#### Reason not now
+The bundled sample profile resolves, so no live figure is affected.
+
+#### Likely outcome
+A missing profile for a declared `lender` key warns (or raises) rather than
+silently degrading the run.
+
+#### Build notes
+Emit a warning to stderr when a `lender` key is present but no profile resolves;
+consider a strict mode that raises.
+
+#### Promotion trigger
+Before real-data runs depend on the cap figure.
+
+#### Related records
+`src/engine/schema.py`; `src/engine/profile.py`; REVIEW-008.
+
+---
+
+### REVIEW-005: `_repayment_day_to_int` returns 1 on a bad value
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 10)
+
+#### Context
+`_repayment_day_to_int` returns `1` when the `repayment_day` value cannot be
+parsed, silently moving projected payment dates to the 1st instead of raising.
+
+#### Reason not now
+No live impact; the samples use valid values.
+
+#### Likely outcome
+A malformed `repayment_day` is a config error.
+
+#### Build notes
+Raise `ValueError` with the offending value, matching the strictness of
+`_resolve_kind`.
+
+#### Promotion trigger
+-
+#### Related records
+`src/engine/schema.py`.
+
+---
+
+### REVIEW-006: Somerton cap test uses synthetic figures, not the real data
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 12)
+
+#### Context
+`test_cap_breakage_from_profile.py::test_cap_allowance_tracks_somerton_refix`
+claims in its docstring to lock "the real Gandon and Somerton figures", but uses
+instalments `1433.91` / `1823.78` (allowances `143.39` / `182.38`). The actual
+Property B data uses `1218.82` / `1550.21` (allowances `121.88` / `155.02`). The
+Gandon figure is real; the Somerton pair is not, so the test does not lock the
+real data.
+
+#### Reason not now
+The golden master still catches a change to B's instalments.
+
+#### Likely outcome
+The test asserts the real Property B figures, or its docstring stops claiming
+they are real.
+
+#### Build notes
+Update the two instalments and the two expected allowances to the real sample
+values, or reword the docstring.
+
+#### Promotion trigger
+-
+#### Related records
+`tests/test_cap_breakage_from_profile.py`; `data_sample/property_b/inputs.sample.yaml`.
+
+---
+
+### REVIEW-007: Cap allowance is unknown for most of the loan's life
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 12)
+
+#### Context
+The allowance is emitted only where a contract states an `instalment`. For
+Property A that is the A1 window only (43 of 422 months); A2 and A3 carry
+`instalment: null`, so the allowance, headroom, and flag are blank from 2028-03
+onward. The Summary sheet and portfolio rollup therefore show a blank cap state
+whenever the as-of date falls after the first contract.
+
+#### Reason not now
+By design: the cap is a percentage of a stated instalment, and a derived PMT is
+a projection, not an agreed figure.
+
+#### Likely outcome
+A documented decision on whether to derive the instalment via PMT (flagged as
+projected) or carry the last known instalment, so the cap is visible across the
+whole term.
+
+#### Build notes
+If adopted, resolve the allowance from a PMT-derived instalment and mark it
+projected; re-baseline the golden fixtures.
+
+#### Promotion trigger
+When the live-position cap view is needed beyond the first contract.
+
+#### Related records
+`src/engine/schema.py`; `src/engine/monthly.py`; `tools/portfolio.py`.
+
+---
+
+### REVIEW-008: The cap flag cannot see an unagreed overpayment
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 7 / Phase 12)
+
+#### Context
+`overpayment_cap_flag` is driven by the `overpayment` column, which is the
+**agreed** standing extra. Any extra the borrower actually paid through the bank
+lands in `difference`, not `overpayment`. A real-world breach (paying more than
+the cap via the bank) therefore leaves the flag at "ok". For a feature whose
+purpose is to flag cap breaches, this is a meaningful gap.
+
+#### Reason not now
+The agreed-terms split is deliberate (Phase 7); changing what feeds the flag is
+a behaviour decision.
+
+#### Likely outcome
+The flag considers the total voluntary overpayment (agreed plus the unattributed
+excess), or a second flag reports the observed breach.
+
+#### Build notes
+Decide the definition, then feed `overpayment + max(0, difference)` (or a
+dedicated observed-overpayment figure) into `overpayment_cap_flag`; re-baseline.
+
+#### Promotion trigger
+Before the cap flag is relied on for real bank data.
+
+#### Related records
+`src/engine/monthly.py`; `src/engine/simulate.py`.
+
+---
+
+### REVIEW-009: The final payoff month attributes the full agreed overpayment
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 7)
+
+#### Context
+In the closing month the debit is trimmed to clear the balance, but the
+attribution still recognises the full agreed overpayment. For Property A month
+`205504`, `overpayment=200.00` is attributed even though the trimmed debit was
+`707.83`; the `-1648.11` difference absorbs it. Conservation holds, but the
+attribution is arguably misleading in the closing month.
+
+#### Reason not now
+Conservation is intact and the difference column makes the residual explicit.
+
+#### Likely outcome
+The closing month's overpayment is capped at what the trimmed debit allows.
+
+#### Build notes
+Cap the recognised overpayment at the month's remaining debit in
+`build_monthly_schedule`; re-baseline the golden fixtures.
+
+#### Promotion trigger
+-
+#### Related records
+`src/engine/monthly.py`.
+
+---
+
+### REVIEW-010: The golden master does not lock workbook Summary numbers
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 4 / Phase 8)
+
+#### Context
+The golden master compares CSVs to 2dp and the effective-inputs YAML
+byte-for-byte. The workbook Summary sheet (as-of balance, current rate, next
+payment, cap state, portal metrics, property value, LTV) is **not** numerically
+locked: `test_output_structure.py` checks sheet names and order only. A
+regression in a Summary figure would pass the suite.
+
+#### Reason not now
+The Summary is presentation over figures already locked in the CSVs.
+
+#### Likely outcome
+The Summary's key figures are locked (a small golden fixture or targeted
+assertions), so a presentation regression is caught.
+
+#### Build notes
+Add a golden fixture of the Summary metric/value pairs per property, or assert
+the headline figures against the monthly schedule.
+
+#### Promotion trigger
+Before the Summary is relied on as the headline deliverable.
+
+#### Related records
+`tests/test_golden_master.py`; `tests/test_output_structure.py`; `src/engine/__main__.py`.
+
+---
+
+### REVIEW-011: `portfolio_totals_by_currency.csv` is not golden-locked
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 4 / Phase 11)
+
+#### Context
+`ROOT_CSV_FILES` in the golden master lists only `portfolio_summary.csv`, so the
+per-currency totals file is shape-checked but its numbers are not locked.
+
+#### Reason not now
+The totals are a sum of already-locked per-property figures.
+
+#### Likely outcome
+The per-currency totals are locked like the summary.
+
+#### Build notes
+Add `portfolio_totals_by_currency.csv` to `ROOT_CSV_FILES` and capture the
+fixture.
+
+#### Promotion trigger
+-
+#### Related records
+`tests/test_golden_master.py`; `tools/portfolio.py`.
+
+---
+
+### REVIEW-012: `csv_subdir` can escape the output directory
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 8)
+
+#### Context
+`_resolve_output` strips surrounding slashes from `csv_subdir` but not `..`, so
+`csv_subdir: ".."` writes CSVs into the parent of the output directory.
+
+#### Reason not now
+Requires a deliberately malformed config; no live impact.
+
+#### Likely outcome
+A `csv_subdir` containing `..` is rejected.
+
+#### Build notes
+Reject any `csv_subdir` whose resolved path leaves `out_dir`.
+
+#### Promotion trigger
+-
+#### Related records
+`src/engine/schema.py`.
+
+---
+
+### REVIEW-013: `_resolve_output` silently treats an unrecognised string flag as False
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 6)
+
+#### Context
+`_resolve_output._flag` returns `False` for any string not in the truthy set, so
+`write_excel: "maybe"` silently disables the workbook rather than erroring.
+
+#### Reason not now
+No live impact; the samples use real booleans.
+
+#### Likely outcome
+An unrecognised boolean string is a config error.
+
+#### Build notes
+Raise on a string that is neither truthy nor falsy, or reuse `_as_bool` with a
+strict mode.
+
+#### Promotion trigger
+-
+#### Related records
+`src/engine/schema.py`.
+
+---
+
+### REVIEW-014: `_is_valuation_only` treats a missing `actuals` as valuation-only
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 11)
+
+#### Context
+`_is_valuation_only` (in `tools/portfolio.py` and `tests/conftest.py`) returns
+`True` when a manifest entry has no `actuals`. A mortgage property that forgets
+to list `actuals` is therefore silently routed to the valuation-only path rather
+than erroring.
+
+#### Reason not now
+The signal is correct for a genuine owned-outright property.
+
+#### Likely outcome
+A mortgage-kind entry with no `actuals` is a config error.
+
+#### Build notes
+Cross-check `property_kind` against the presence of `actuals` and raise on a
+mismatch.
+
+#### Promotion trigger
+-
+#### Related records
+`tools/portfolio.py`; `tests/conftest.py`.
+
+---
+
+### REVIEW-015: Silent `except Exception` in as-of derivation
+
+Status: REJECTED
+Captured: 2026-09-26
+Source: phase audit (Phase 11)
+
+#### Context
+`_derive_as_of` and `_derive_valuation_as_of` swallow any exception while
+reading the inputs YAML and fall back to `{}`, so a malformed inputs file yields
+a blank as-of date with no warning. Part of the broader NEW-2 family of broad
+exception handlers.
+
+#### Reason not now
+**Duplicate of NEW-2.** Groomed 2026-09-26: the two sites are folded into
+NEW-2's scope, so this item is closed rather than tracked separately.
+
+#### Likely outcome
+A malformed inputs file warns rather than silently blanking the as-of.
+
+#### Build notes
+Narrow the exception to `yaml.YAMLError` / `OSError` and log a warning.
+
+#### Promotion trigger
+-
+#### Related records
+`tools/portfolio.py`; NEW-2.
+
+---
+
+### REVIEW-016: `_read_valuation_anchor` silently falls back to loan-derived fields
+
+Status: CANDIDATE
+Captured: 2026-09-26
+Source: phase audit (Phase 6)
+
+#### Context
+When the `valuation:` block is absent, `_read_valuation_anchor` falls back to
+loan-derived fields on `Inputs`. The fallback is bounded by a fail-loud check
+for a positive base value and a base date, so it cannot silently emit a flat
+series, but the fallback itself is undocumented at the call site.
+
+#### Reason not now
+The fail-loud guard bounds the risk.
+
+#### Likely outcome
+The fallback is either documented as intended or removed.
+
+#### Build notes
+Add a comment or a warning when the fallback path is taken.
+
+#### Promotion trigger
+-
+#### Related records
+`src/engine/valuation_only.py`.

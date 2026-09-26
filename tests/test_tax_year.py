@@ -31,7 +31,7 @@ def test_tax_year_sheet_basic(engine_outputs, inputs_path):
     """
 
     monthly, _, _ = engine_outputs
-    raw_cfg = yaml.safe_load(Path(inputs_path).read_text())
+    raw_cfg = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
 
     # Load tenancy information using the same precedence order as production:
     # configuration override first, fall back to the sample pack otherwise.

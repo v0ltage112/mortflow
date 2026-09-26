@@ -123,7 +123,7 @@ def test_money_market_resolution_by_quote_date():
 
 def test_resolve_prefers_local_over_sample(tmp_path):
     """resolve_lender_profile uses the sample, then a local file when it appears."""
-    (tmp_path / "sample_lender.yaml").write_text(SAMPLE_PROFILE.read_text())
+    (tmp_path / "sample_lender.yaml").write_text(SAMPLE_PROFILE.read_text(encoding="utf-8"), encoding="utf-8")
     prof = resolve_lender_profile("boi", tmp_path)
     assert prof.lender_id == "sample_lender"
     (tmp_path / "boi.local.yaml").write_text(

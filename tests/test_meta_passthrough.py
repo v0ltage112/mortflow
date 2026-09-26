@@ -19,10 +19,10 @@ def test_meta_block_is_ignored_by_engine(inputs_path, tmp_path):
     aggressively this check will fail and remind us to keep metadata flexible.
     """
 
-    raw = yaml.safe_load(Path(inputs_path).read_text())
+    raw = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
     raw["meta"] = {"note": "harmless testing block"}
     tmp_inputs = tmp_path / "inputs.yaml"
-    tmp_inputs.write_text(yaml.safe_dump(raw))
+    tmp_inputs.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
     # Should load without error; any exception indicates we started parsing the
     # meta block for real, which is a backwards-incompatible change.
