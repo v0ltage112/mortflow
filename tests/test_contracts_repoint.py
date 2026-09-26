@@ -176,3 +176,123 @@ def test_missing_lender_profile_warns(tmp_path, capsys):
     assert inputs.profile is None
     assert "no_such_lender" in captured.err
     assert "not found" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# REVIEW-003: an empty contracts array is a config error, not a legacy file.
+# ---------------------------------------------------------------------------
+
+def test_empty_contracts_array_raises(tmp_path):
+    """REVIEW-003: 'contracts: []' is an error, not a silent legacy fallback."""
+    import pytest
+
+    p = _write_inputs(tmp_path, [])
+    with pytest.raises(ValueError, match="present but empty"):
+        load_inputs(p)
+
+
+def test_absent_contracts_key_is_legacy(tmp_path):
+    """A file with no 'contracts' key at all still loads as a legacy file."""
+    import yaml
+
+    raw = {
+        "meta": {"property_id": "t", "name": "T", "kind": "investment"},
+        "loan": {
+            "property_id": "t",
+            "drawdown_amount": 100000,
+            "drawdown_date": "2024-01-01",
+            "total_term_months": 120,
+            "property_price": 150000,
+            "repayment_day_default": 5,
+            "first_payment_date": "2024-02-05",
+            "known_first_payment": 900.0,
+        },
+        "rate_blocks": [{"start_month": 1, "end_month": 120, "annual_rate": 0.03, "kind": "fixed"}],
+    }
+    p = tmp_path / "legacy.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    inputs = load_inputs(p)
+    # No contracts, so the legacy rate_blocks path is used.
+    assert inputs.contracts == []
+    assert inputs.loan_v2 is None
+
+
+# ---------------------------------------------------------------------------
+# REVIEW-005: a malformed repayment_day raises rather than silently becoming 1.
+# ---------------------------------------------------------------------------
+
+def test_bad_repayment_day_raises(tmp_path):
+    """REVIEW-005: a non-numeric repayment_day is a config error."""
+    import pytest
+    import yaml
+
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},
+    ])
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    raw["loan"]["repayment_day"] = "whenever"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="repayment_day"):
+        load_inputs(p)
+
+
+def test_out_of_range_repayment_day_raises(tmp_path):
+    """REVIEW-005: a repayment_day outside 1-31 is a config error."""
+    import pytest
+    import yaml
+
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},
+    ])
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    raw["loan"]["repayment_day"] = 45
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="out of range"):
+        load_inputs(p)
+
+
+def test_month_end_repayment_day_loads(tmp_path):
+    """REVIEW-005: 'month_end' still resolves to 31 (clamped to the real month end)."""
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},
+    ])
+    import yaml
+
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    raw["loan"]["repayment_day"] = "month_end"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    assert load_inputs(p).repayment_day_default == 31
+
+
+# ---------------------------------------------------------------------------
+# REVIEW-013: an unrecognised boolean string raises rather than reading as False.
+# ---------------------------------------------------------------------------
+
+def test_bad_output_boolean_raises(tmp_path):
+    """REVIEW-013: 'write_excel: maybe' is a config error, not a silent False."""
+    import pytest
+    import yaml
+
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},
+    ])
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    raw["output"] = {"write_excel": "maybe"}
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="expected a boolean"):
+        load_inputs(p)
+
+
+def test_quoted_output_boolean_reads_correctly(tmp_path):
+    """REVIEW-013: a quoted 'false' reads as False, not as a truthy string."""
+    import yaml
+
+    p = _write_inputs(tmp_path, [
+        {"id": "C1", "start_date": "2024-01-01", "rate": 0.03},
+    ])
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    raw["output"] = {"write_excel": "false", "write_csv": "true"}
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    out = load_inputs(p).output
+    assert out.write_excel is False
+    assert out.write_csv is True
