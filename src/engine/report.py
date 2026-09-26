@@ -40,6 +40,7 @@ session so the golden accrual divisor does not move here.
 
 from __future__ import annotations
 
+import zlib
 from datetime import date, timedelta
 from typing import Dict, Optional
 
@@ -103,7 +104,13 @@ def _add_table(ws, name_hint="Tbl"):
         return
     ref = f"A1:{get_column_letter(max_col)}{max_row}"
     safe = "".join(ch for ch in name_hint if ch.isalnum())[:20]
-    tbl = Table(displayName=f"{safe}{abs(hash((ws.title, ref)))%10000}", ref=ref)
+    # Deterministic suffix: Python's built-in hash() is salted per process, so
+    # using it here made the workbook table names (and therefore the .xlsx
+    # bytes) differ between runs. crc32 is stable across processes, so the same
+    # inputs now produce a byte-identical workbook, matching the product's
+    # determinism guarantee.
+    suffix = zlib.crc32(f"{ws.title}|{ref}".encode("utf-8")) % 10000
+    tbl = Table(displayName=f"{safe}{suffix}", ref=ref)
     style = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     tbl.tableStyleInfo = style
     ws.add_table(tbl)

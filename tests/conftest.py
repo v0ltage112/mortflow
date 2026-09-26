@@ -121,7 +121,7 @@ def _load_cases(prop_filters: List[str]) -> List[Case]:
     # P2/S2: locate portfolio.yaml via the resolver (CLI > env > paths.local.yaml > ./data).
     # With no config this is <repo_root>/data/portfolio.yaml, so a plain repo-root run is unchanged.
     port_path = resolve_data_dir() / "portfolio.yaml"
-    raw = yaml.safe_load(port_path.read_text())
+    raw = yaml.safe_load(port_path.read_text(encoding="utf-8"))
     props = raw.get("properties", []) if isinstance(raw, dict) else []
 
     cases: List[Case] = []
@@ -214,7 +214,7 @@ def engine_outputs(inputs, actuals_df):
 def portal_snapshot_date(inputs_path: Path):
     """Pick the most recent portal snapshot date declared in YAML (if any)."""
     from datetime import date, datetime
-    raw = yaml.safe_load(Path(inputs_path).read_text())
+    raw = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
     snaps = (raw.get("reconcile", {}) or {}).get("snapshots", []) or []
     if not snaps:
         return None
