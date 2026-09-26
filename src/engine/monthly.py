@@ -533,16 +533,25 @@ def build_monthly_schedule(
         )
 
         # ---------------- OVERPAYMENT-CAP HEADROOM & FLAG (Phase 12 / S2) ----------------
-        # Per-payment basis: measure this month's recognised voluntary
-        # overpayment (the Phase 7 overpayment figure above) against this month's
-        # allowance. The BOI cap does not roll over and has no calendar reset, so
-        # each month is judged on its own allowance rather than a running annual
-        # pool. Headroom is the allowance minus the used amount (positive is room
-        # left, negative is the amount over the cap); the flag is
-        # ok / approaching / breached from overpayment_cap_flag. Both are null
-        # when the allowance is unresolvable, so "unknown" never reads as free
-        # headroom.
-        cap_used = overpayment  # the Phase 7 recognised voluntary overpayment for the month
+        # Per-payment basis: measure this month's voluntary overpayment against
+        # this month's allowance. The BOI cap does not roll over and has no
+        # calendar reset, so each month is judged on its own allowance rather
+        # than a running annual pool. Headroom is the allowance minus the used
+        # amount (positive is room left, negative is the amount over the cap);
+        # the flag is ok / approaching / breached from overpayment_cap_flag.
+        # Both are null when the allowance is unresolvable, so "unknown" never
+        # reads as free headroom.
+        #
+        # REVIEW-008: the cap is a limit on the money actually overpaid, not only
+        # on the agreed standing extra. A borrower can overpay through the bank
+        # without an agreed rule, and that excess lands in the Difference
+        # residual rather than in ``overpayment``. Measuring only the agreed
+        # figure would leave a real breach unflagged. The used amount is
+        # therefore the agreed overpayment plus any positive Difference (a
+        # negative Difference is an underpayment, not an overpayment, so it is
+        # floored at zero). In the bundled samples the Difference is zero in
+        # every allowance month, so this changes no locked figure.
+        cap_used = round(overpayment + max(0.0, payment_unattributed), 2)
         if overpayment_cap_allowance_eur is None:
             overpayment_cap_headroom_eur = None
         else:
