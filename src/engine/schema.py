@@ -155,6 +155,12 @@ VALUATION_ONLY_KINDS: frozenset = frozenset(
 # behaviour stays locked.
 _VALID_PAYMENT_HOLIDAY_MODES = {"interest_only", "full_deferral"}
 
+# The string spellings accepted for a boolean config value. Defined once so the
+# meta toggles, the output flags, and the holiday capitalise flag all read a
+# quoted boolean the same way (REVIEW-013).
+_TRUTHY_STRINGS = {"1", "true", "yes", "on"}
+_FALSY_STRINGS = {"0", "false", "no", "off", ""}
+
 
 @dataclass
 class RateBlock:
@@ -431,18 +437,32 @@ class Inputs:
     clone = copy
 
 
-def _as_bool(value, default: bool = False) -> bool:
+def _as_bool(value, default: bool = False, strict: bool = False) -> bool:
     """Coerce a YAML value to a bool, reading quoted strings correctly.
 
     Finance note: YAML ``false`` parses to a real bool, but a quoted ``"false"``
     parses to the non-empty string ``"false"``, which ``bool()`` would read as
     True. This normalises the common truthy/falsy spellings so a quoted flag
     never silently flips a module on or off.
+
+    Technical note: with ``strict=True`` an unrecognised string raises instead of
+    defaulting to False, so a typo such as ``write_excel: "maybe"`` is caught
+    rather than silently disabling an artefact (REVIEW-013).
     """
     if value is None:
         return default
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
+        s = value.strip().lower()
+        if s in _TRUTHY_STRINGS:
+            return True
+        if s in _FALSY_STRINGS:
+            return False
+        if strict:
+            raise ValueError(
+                f"expected a boolean, got {value!r}; use one of "
+                f"{sorted(_TRUTHY_STRINGS)} or {sorted(_FALSY_STRINGS)}"
+            )
+        return False
     return bool(value)
 
 
@@ -474,6 +494,10 @@ def _repayment_day_to_int(value) -> int:
     scaffolding clamps a day-of-month into each month, so a month-end instruction
     becomes 31 (clamp_day then pins it to the real last day). A missing value
     falls back to the 1st, matching the legacy ``repayment_day_default`` default.
+
+    REVIEW-005: a value that is present but not a day of month or ``month_end``
+    raises rather than silently becoming the 1st, which would move every
+    projected payment date without warning.
     """
     if value is None:
         return 1
@@ -481,9 +505,18 @@ def _repayment_day_to_int(value) -> int:
     if s in {"month_end", "eom", "end_of_month", "month-end"}:
         return 31
     try:
-        return int(float(s))
+        day = int(float(s))
     except (TypeError, ValueError):
-        return 1
+        raise ValueError(
+            f"repayment_day {value!r} is not a day of month or 'month_end'; "
+            "use an integer 1-31 or the word month_end"
+        )
+    if not 1 <= day <= 31:
+        raise ValueError(
+            f"repayment_day {value!r} is out of range; use an integer 1-31 "
+            "or the word month_end"
+        )
+    return day
 
 
 def _resolve_meta(raw: dict) -> PropertyMeta:
@@ -534,13 +567,9 @@ def _resolve_output(raw: dict) -> OutputConfig:
 
     def _flag(name: str, default: bool) -> bool:
         # A missing key inherits the behaviour-preserving default; an explicit
-        # value is coerced so 'true'/1/yes/on all read as True.
-        val = out_raw.get(name)
-        if val is None:
-            return default
-        if isinstance(val, str):
-            return val.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(val)
+        # value is coerced so 'true'/1/yes/on all read as True. REVIEW-013: an
+        # unrecognised string raises rather than silently reading as False.
+        return _as_bool(out_raw.get(name), default, strict=True)
 
     # Currency is recorded upper-cased and locale as-is; empty or missing values
     # fall back to the euro/Irish defaults that match today's behaviour.
@@ -874,6 +903,14 @@ def _resolve_loan_v2(loan: dict, contracts: List[Contract], meta: PropertyMeta) 
     samples and the Gandon golden are untouched. property_id falls back to the
     meta block, which is where the sample files carry it.
     """
+    if "contracts" in loan and not loan.get("contracts"):
+        # REVIEW-003: an empty contracts array is a config error, not a legacy
+        # file. Distinguish it from a file with no 'contracts' key at all (a
+        # genuine legacy file), which still falls back to rate_blocks.
+        raise ValueError(
+            "the 'contracts' array is present but empty; either remove the key "
+            "to use the legacy rate_blocks model, or list at least one contract"
+        )
     if not loan.get("contracts"):
         return None
     return Loan(

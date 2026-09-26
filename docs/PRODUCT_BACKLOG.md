@@ -941,7 +941,7 @@ When a real refix lands mid-month.
 
 ### REVIEW-003: `contracts: []` is treated as a legacy file
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 10)
 
@@ -952,20 +952,19 @@ keys rather than erroring. A user who empties the array by mistake gets the old
 model with no warning.
 
 #### Reason not now
-No live impact; the samples always carry contracts.
-
+-
 #### Likely outcome
 An empty `contracts:` array is a config error when the mortgage module is on.
 
 #### Build notes
-Distinguish "no `contracts:` key" (legacy) from "`contracts:` present but empty"
-(error) in `_resolve_loan_v2`.
+**Done 2026-09-26** on branch `fix/review-low`. `_resolve_loan_v2` now
+distinguishes "no `contracts:` key" (legacy, still loads) from "`contracts:`
+present but empty" (raises `ValueError`). Two tests added. Output-neutral.
 
 #### Promotion trigger
-Before Phase 13 scenarios perturb contracts.
-
+-
 #### Related records
-`src/engine/schema.py`.
+`src/engine/schema.py`; `tests/test_contracts_repoint.py`.
 
 ---
 
@@ -1003,7 +1002,7 @@ so **no golden fixture was re-baselined**. One test added.
 
 ### REVIEW-005: `_repayment_day_to_int` returns 1 on a bad value
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 10)
 
@@ -1012,19 +1011,20 @@ Source: phase audit (Phase 10)
 parsed, silently moving projected payment dates to the 1st instead of raising.
 
 #### Reason not now
-No live impact; the samples use valid values.
-
+-
 #### Likely outcome
 A malformed `repayment_day` is a config error.
 
 #### Build notes
-Raise `ValueError` with the offending value, matching the strictness of
-`_resolve_kind`.
+**Done 2026-09-26** on branch `fix/review-low`. `_repayment_day_to_int` now
+raises `ValueError` for a non-numeric value or one outside 1-31, while still
+accepting `month_end` (31) and a missing value (1). Three tests added.
+Output-neutral.
 
 #### Promotion trigger
 -
 #### Related records
-`src/engine/schema.py`.
+`src/engine/schema.py`; `tests/test_contracts_repoint.py`.
 
 ---
 
@@ -1244,7 +1244,7 @@ Reject any `csv_subdir` whose resolved path leaves `out_dir`.
 
 ### REVIEW-013: `_resolve_output` silently treats an unrecognised string flag as False
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: phase audit (Phase 6)
 
@@ -1253,19 +1253,19 @@ Source: phase audit (Phase 6)
 `write_excel: "maybe"` silently disables the workbook rather than erroring.
 
 #### Reason not now
-No live impact; the samples use real booleans.
-
+-
 #### Likely outcome
 An unrecognised boolean string is a config error.
 
 #### Build notes
-Raise on a string that is neither truthy nor falsy, or reuse `_as_bool` with a
-strict mode.
+**Done 2026-09-26** on branch `fix/review-low`. `_as_bool` gained a `strict`
+mode; `_resolve_output._flag` uses it, so an unrecognised string raises while a
+quoted `"false"` still reads as False. Two tests added. Output-neutral.
 
 #### Promotion trigger
 -
 #### Related records
-`src/engine/schema.py`.
+`src/engine/schema.py`; `tests/test_contracts_repoint.py`.
 
 ---
 
