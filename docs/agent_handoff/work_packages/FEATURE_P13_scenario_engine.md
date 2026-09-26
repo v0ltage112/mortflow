@@ -183,7 +183,13 @@ Before Phase 13 began, a review of the repository (which was built without the
 Companion Coach skill) produced a set of defects. All were fixed on short-lived
 branches, each merged to `main` with `--no-ff` and pushed. **No golden fixture
 was re-baselined at any point.** Test count moved from 170 passed / 1 failed to
-194 passed / 4 skipped / 0 failed.
+211 passed / 4 skipped / 0 failed.
+
+A subsequent phase-by-phase audit of phases 0-12 (2026-09-26) confirmed every
+phase does what it claims. Its findings are logged as REVIEW-000..016 in
+`PRODUCT_BACKLOG.md`; REVIEW-000/001/003/004/005/006/008/010/013 are fixed and
+merged, REVIEW-007 is deferred pending a design decision, and the remaining
+low-severity items are open.
 
 | Branch | Commit | Scope |
 | --- | --- | --- |

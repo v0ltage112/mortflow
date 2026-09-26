@@ -13,9 +13,9 @@ Facts verified against the repository or an authoritative source.
 
 - **F1.** The engine is a daily ACT/365 cashflow model for Irish residential
   mortgages. Public repo `github.com/v0ltage112/mortflow`.
-- **F2.** `main` is at `218f8ce`, tagged `v2.2.0`. The working tree is clean.
-- **F3.** The test suite currently reports **1 failed, 170 passed, 4 skipped**.
-  The failure is `test_golden_master.py::test_root_csv_locked[portfolio_summary.csv]`.
+- **F2.** `main` is at `71368af` (after the phase audit and REVIEW fix passes).
+  The working tree is clean. The last tag is `v2.2.0` at `218f8ce`.
+- **F3.** The test suite currently reports **211 passed, 4 skipped, 0 failed**.
 - **F4.** The golden master compares CSVs to two decimal places and the
   effective-inputs YAML byte-for-byte.
 - **F5.** `Inputs` is a frozen dataclass with `.copy()` / `.clone()`.
@@ -26,7 +26,9 @@ Facts verified against the repository or an authoritative source.
 - **F8.** Lender rules are effective-dated YAML resolved by `src/engine/profile.py`.
 - **F9.** The active phase is Phase 13 (scenario / what-if analysis), target tag
   `v2.3.0`, rollback `v2.2.0`. The active session is Phase 13 / S1.
-- **F10.** `tests/test_overpayment_cap_headroom.py` is tracked and 0 bytes.
+- **F10.** `tests/test_overpayment_cap_headroom.py` was tracked and 0 bytes;
+  **filled 2026-09-26** (BACKLOG-002) with 18 tests, then extended to 20 by
+  REVIEW-008.
 - **F11.** Phase 12 shipped `v2.2.0` at `main` `218f8ce` with 171 passed / 4
   skipped / 0 failed.
 - **F12.** Local code path is `C:\Code\mortflow`; data and outputs live outside
@@ -40,6 +42,14 @@ Facts verified against the repository or an authoritative source.
 - **F16.** Phase 14 is the multi-property dashboard; Phase 15 is RPZ projection.
 - **F17.** The CI pipeline was dropped from the active spine to the backlog on
   2026-07-16 (solo dev runs `pytest` before every push).
+- **F18.** A phase-by-phase audit of phases 0-12 was completed 2026-09-26. Every
+  phase does what it claims; findings are logged as REVIEW-000..016 in
+  `PRODUCT_BACKLOG.md`. REVIEW-000 (3 trivial defects), REVIEW-001, 003, 004,
+  005, 006, 008, 010, 013 are fixed and merged; REVIEW-007 is deferred pending a
+  design decision; the rest remain open. No golden fixture was re-baselined by
+  any fix.
+- **F19.** The workbook Summary sheet numbers are now golden-locked
+  (`tests/fixtures/golden/<scope>/summary.csv`, REVIEW-010).
 
 ---
 

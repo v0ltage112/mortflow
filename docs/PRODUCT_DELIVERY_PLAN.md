@@ -84,10 +84,16 @@ all with no change to engine maths or golden fixtures.
 | `refactor/repo-structure-privacy` | `4a5aeb6` | Companion Project handoff infrastructure (docs) |
 | `fix/golden-master-determinism` | `2a26f1d` | BACKLOG-001: deterministic valuation-only rollup as-of date |
 | `chore/review-defects` | `11b39ff` | BACKLOG-002/005/007: cap-headroom tests, `ValueError`, README |
-| `chore/minor-defects` | *(this branch)* | BACKLOG-003/004/006 + NEW-1/3/4/5: encodings, de-duplication, packaging, hygiene |
+| `chore/minor-defects` | `7b8e59a` | BACKLOG-003/004/006 + NEW-1/3/4/5: encodings, de-duplication, packaging, hygiene |
+| `review/phase-audit-2026-09-26` | `de317b7` | Phase audit 0-12 findings + 3 inline fixes (REVIEW-000..016) |
+| `fix/review-priority` | `fa5100e` | REVIEW-008 cap flag; REVIEW-010 Summary golden lock |
+| `fix/review-medium` | `13d5476` | REVIEW-001 contiguity; REVIEW-004 profile warning; REVIEW-006 real figures |
+| `fix/review-low` | `140e5e5` | REVIEW-003 empty contracts; REVIEW-005 repayment_day; REVIEW-013 strict booleans |
 
-Test count moved from 170 passed / 1 failed to **194 passed / 4 skipped / 0 failed**.
-No golden fixture was re-baselined at any point.
+Test count moved from 170 passed / 1 failed to **211 passed / 4 skipped / 0 failed**.
+No golden fixture was re-baselined at any point. The phase audit (REVIEW-000..016)
+found every phase does what it claims; REVIEW-007 is deferred pending a design
+decision and the remaining low-severity items are open (see `PRODUCT_BACKLOG.md`).
 
 ---
 

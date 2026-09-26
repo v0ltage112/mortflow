@@ -5,7 +5,7 @@
 > repository wins — then correct this file.
 
 **Last updated:** 2026-09-26
-**Updated by:** repo structuring session (Companion Project Mode bootstrap)
+**Updated by:** phase audit 0-12 + REVIEW fix passes (priority, medium, low)
 
 ---
 
@@ -18,7 +18,7 @@
 | Active session | **Phase 13 / S1 - `scenarios.yaml` schema, loader, and clone-and-perturb** |
 | Active work package | `work_packages/FEATURE_P13_scenario_engine.md` |
 | Current branch | `main` (feature branch `phase13/scenario-engine` to be cut at S1 apply) |
-| Last verified commit | `218f8ce` (tag `v2.2.0`) |
+| Last verified commit | `71368af` (main, after the phase audit and REVIEW fix passes) |
 | Target tag | `v2.3.0` |
 | Rollback reference | `v2.2.0` |
 | Working tree | Clean |
@@ -27,7 +27,7 @@
 | Data + out path | Private, outside the repo, linked via git-ignored `paths.local.yaml` (see `START_AGENT.md`) |
 | Old private repo | `github.com/v0ltage112/mortgage-model` (archived) |
 | Test count at last ship | 171 passed / 4 skipped / 0 failed (Phase 12, `v2.2.0`) |
-| Test count now | 194 passed / 4 skipped / 0 failed (after BACKLOG-001/002/003/004/005/006/007 + NEW-1/3/4/5) |
+| Test count now | 211 passed / 4 skipped / 0 failed (after the phase audit + REVIEW-000/001/003/004/005/006/008/010/013) |
 
 ---
 
@@ -132,10 +132,39 @@ as NEW-2; not yet fixed.
 
 ---
 
+## Phase audit (2026-09-26)
+
+A detailed, evidence-based review of every completed phase (0-12) was carried
+out. Every phase does what it claims, and the outputs are correct against the
+golden fixtures. Findings are logged as `REVIEW-000..016` in
+`PRODUCT_BACKLOG.md`.
+
+**Fixed and merged (no golden fixture re-baselined):**
+
+| Item | What |
+| --- | --- |
+| REVIEW-000 | Quoted string booleans; non-deterministic workbook table names; test-file encodings |
+| REVIEW-001 | Contract contiguity validation (gap/overlap/early open-ended now raise) |
+| REVIEW-003 | `contracts: []` now raises instead of silently falling back to legacy |
+| REVIEW-004 | Missing lender profile now warns on stderr |
+| REVIEW-005 | Malformed `repayment_day` now raises instead of silently becoming 1 |
+| REVIEW-006 | Somerton cap test now uses the real sample figures |
+| REVIEW-008 | Cap flag now sees an unagreed bank overpayment |
+| REVIEW-010 | Workbook Summary numbers are now golden-locked |
+| REVIEW-013 | Unrecognised boolean strings now raise |
+
+**Deferred:** REVIEW-007 (cap allowance blank for most of the loan's life) needs
+a design decision (agreed vs projected instalment) and a deliberate golden
+re-baseline.
+
+**Open (low severity):** REVIEW-002, 009, 011, 012, 014, 016.
+
+---
+
 ## Exact next action
 
-1. **Merge `fix/golden-master-determinism`** into `main` (suite green, fixture
-   unchanged).
+1. **Return to REVIEW-007** (agreed vs projected instalment for the cap), or
+   sweep the remaining low-severity REVIEW items.
 2. **Cut `phase13/scenario-engine`** off `main` and begin S1
    (`scenarios.yaml` schema, loader, and clone-and-perturb).
 3. Confirm the S1 open questions (actuals-based scenarios, output placement).
@@ -151,6 +180,7 @@ as NEW-2; not yet fixed.
 - `BACKLOG-005` — Replace `assert` validation with `ValueError`.
 - `BACKLOG-006` — Add `pyproject.toml`; move pytest to dev requirements.
 - `BACKLOG-007` — Refresh README version history and test count.
+- `REVIEW-000..016` — Phase audit findings (see `PRODUCT_BACKLOG.md`).
 
 **Confirmation:** no backlog item is represented as active. Phase 13 is the only
 active work.
