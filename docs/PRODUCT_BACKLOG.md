@@ -466,27 +466,33 @@ The sample pins `as_of_date: 2026-07-17`, so the golden value is unchanged and
 
 ### BACKLOG-002: Remove or fill empty test file
 
-Status: READY
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-`tests/test_overpayment_cap_headroom.py` is tracked and 0 bytes.
+`tests/test_overpayment_cap_headroom.py` was tracked and 0 bytes. The Phase 12
+S2 notes claimed it locked the flag boundaries, headroom maths, the 90%
+approaching boundary, a synthetic breach, the null passthrough, and the
+cumulative total, but none of those tests existed. `overpayment_cap_flag()` was
+not called by any test.
 
 #### Reason not now
-Not Phase 13 scope.
-
+-
 #### Likely outcome
-Either real headroom coverage or no misleading empty file.
+Real coverage of the cap flag and headroom logic.
 
 #### Build notes
-Write the intended headroom tests, or delete the file.
+**Done 2026-09-26** (BACKLOG-002): 18 tests authored covering the null
+allowance, the ok / approaching / breached boundaries (including the subtle
+`used == allowance` case, which is approaching not breached), the non-positive
+allowance rule, the real Gandon allowance boundaries, and the three emitted
+monthly columns (headroom, flag, cumulative).
 
 #### Promotion trigger
-Immediate — small, low risk.
-
+-
 #### Related records
-`DECISIONS_AND_LEARNINGS.md` (L2).
+`src/engine/monthly.py` (`overpayment_cap_flag`); `DECISIONS_AND_LEARNINGS.md` (L2).
 
 ---
 
@@ -548,26 +554,25 @@ When touching those modules for another reason.
 
 ### BACKLOG-005: Replace `assert` validation with `ValueError`
 
-Status: READY
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-`tools/portfolio.py:103` validates `portfolio.yaml` with `assert`, which is
-stripped under `python -O`.
+`tools/portfolio.py` validated `portfolio.yaml` with `assert`, which is stripped
+under `python -O`.
 
 #### Reason not now
-Not Phase 13 scope.
-
+-
 #### Likely outcome
 Validation that survives optimisation.
 
 #### Build notes
-Raise `ValueError` with an actionable message.
+**Done 2026-09-26** (BACKLOG-005): `load_portfolio` now raises `ValueError` with
+an actionable message; also reads with explicit UTF-8. Three tests added.
 
 #### Promotion trigger
-Immediate — small, low risk.
-
+-
 #### Related records
 `DECISIONS_AND_LEARNINGS.md` (L4).
 
@@ -602,26 +607,25 @@ When packaging or tooling is next touched.
 
 ### BACKLOG-007: Refresh README version history and test count
 
-Status: READY
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-README version history stops at v2.1.0 (v2.2.0 missing); the stated test count
-(168) is stale.
+README version history stopped at v2.1.0 (v2.2.0 missing); the stated test count
+(168) was stale.
 
 #### Reason not now
-Not Phase 13 scope.
-
+-
 #### Likely outcome
 Accurate README.
 
 #### Build notes
-Add the v2.2.0 row; correct the test count after BACKLOG-001 is fixed.
+**Done 2026-09-26** (BACKLOG-007): added the v2.2.0 row (overpayment cap) and
+corrected the test count to 194 passed / 4 skipped.
 
 #### Promotion trigger
-Immediate — small, low risk.
-
+-
 #### Related records
 `README.md`; BACKLOG-001.
 

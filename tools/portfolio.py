@@ -97,10 +97,16 @@ def load_portfolio(p: Path) -> Dict:
     """Read portfolio.yaml into a dict and check it carries a properties list.
 
     A missing 'properties' list is a hard error: without it there would be
-    nothing to run.
+    nothing to run. This raises ValueError rather than using an assert, because
+    assert statements are stripped under ``python -O`` and the check would then
+    silently disappear.
     """
-    raw = yaml.safe_load(p.read_text())
-    assert "properties" in raw and isinstance(raw["properties"], list), "portfolio.yaml missing 'properties' list"
+    raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("properties"), list):
+        raise ValueError(
+            f"portfolio.yaml at {p} is missing a 'properties' list; "
+            "add a top-level 'properties:' list of property entries"
+        )
     return raw
 
 
