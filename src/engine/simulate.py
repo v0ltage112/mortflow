@@ -616,7 +616,9 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
 
     # Property value (at EOM) and LTVs ----------------------------------------
     try:
-        monthly["property_value"] = monthly["month_start"].apply(lambda ms: property_value_on(inputs, eom(ensure_date(ms))))
+        monthly["property_value"] = monthly["month_start"].apply(
+            lambda ms: property_value_on(inputs, eom(ensure_date(ms)))
+        )
         if "model_eom_balance" in monthly.columns:
             monthly["ltv_model_eom"] = monthly["model_eom_balance"] / monthly["property_value"]
         if "bank_eom_running_balance" in monthly.columns:
@@ -639,6 +641,3 @@ def run_engine(inputs: Inputs, actuals: pd.DataFrame) -> Tuple[pd.DataFrame, pd.
         file=sys.stderr,
     )
     return monthly, rec, events_df
-
-
-print("[engine.simulate] scaffolding and engine ready", file=sys.stderr)

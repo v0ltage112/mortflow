@@ -27,7 +27,7 @@
 | Data + out path | Private, outside the repo, linked via git-ignored `paths.local.yaml` (see `START_AGENT.md`) |
 | Old private repo | `github.com/v0ltage112/mortgage-model` (archived) |
 | Test count at last ship | 171 passed / 4 skipped / 0 failed (Phase 12, `v2.2.0`) |
-| Test count now | 194 passed / 4 skipped / 0 failed (after BACKLOG-001/002/005 fixes) |
+| Test count now | 194 passed / 4 skipped / 0 failed (after BACKLOG-001/002/003/004/005/006/007 + NEW-1/3/4/5) |
 
 ---
 
@@ -101,13 +101,34 @@ These were found during the 2026-09-26 review and are logged in
    **FIXED 2026-09-26** (BACKLOG-002): 18 tests authored, locking the flag
    boundaries, headroom maths, the 90% trip point, the null passthrough, and the
    cumulative total.
-3. `Path.read_text()` without explicit `encoding="utf-8"` in several modules.
-4. Duplicated `_VALUATION_ONLY_KINDS`, `_slugify`, and tax date helpers.
+3. ~~`Path.read_text()` without explicit `encoding="utf-8"` in several modules.~~
+   **FIXED 2026-09-26** (BACKLOG-003): explicit UTF-8 on all remaining reads
+   and writes in `src/` and `tools/`.
+4. ~~Duplicated `_VALUATION_ONLY_KINDS`, `_slugify`, and tax date helpers.~~
+   **FIXED 2026-09-26** (BACKLOG-004): the kind set now lives once in
+   `schema.VALUATION_ONLY_KINDS`; `slugify` is imported from `helpers`; the tax
+   month-end helper is shared. `tax._ensure_date` stays local (deliberately
+   lenient where the engine's is strict).
 5. ~~`assert` used for input validation in `tools/portfolio.py`.~~ **FIXED
    2026-09-26** (BACKLOG-005): now raises `ValueError` with an actionable
    message; 3 tests added.
 6. ~~README version history stops at v2.1.0 (v2.2.0 missing); test count stale.~~
    **FIXED 2026-09-26** (BACKLOG-007): v2.2.0 row added; test count corrected.
+7. ~~Eleven modules print a "ready" line at import time.~~ **FIXED 2026-09-26**
+   (NEW-1): all import-time prints removed; seven now-unused `import sys` lines
+   dropped. Importing `src.engine` is now silent.
+8. ~~No `.gitattributes`.~~ **FIXED 2026-09-26** (NEW-3): added, pinning golden
+   fixtures to LF and `.bat` files to CRLF.
+9. ~~`run_sample.bat` used inline `python -c`.~~ **FIXED 2026-09-26** (NEW-4):
+   now uses the `tools/_resolve.py` shim, matching `run.bat`.
+10. ~~Five lines over 120 characters in `src/`.~~ **FIXED 2026-09-26** (NEW-5).
+11. ~~No `pyproject.toml`; `pytest` in runtime requirements.~~ **FIXED
+    2026-09-26** (BACKLOG-006): `pyproject.toml` added; `pytest` moved to
+    `requirements-dev.txt`.
+
+**Still open:** twelve broad `except Exception` blocks, two of which swallow the
+error silently (`src/engine/__main__.py:249`, `tools/portfolio.py:314`). Logged
+as NEW-2; not yet fixed.
 
 ---
 

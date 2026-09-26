@@ -177,7 +177,22 @@ return rate. Gandon (rental) interest-saved is gross only this phase.
 ## Closure status
 
 Open — S0 complete, S1 not started.
+## Pre-phase maintenance (2026-09-26)
 
+Before Phase 13 began, a review of the repository (which was built without the
+Companion Coach skill) produced a set of defects. All were fixed on short-lived
+branches, each merged to `main` with `--no-ff` and pushed. **No golden fixture
+was re-baselined at any point.** Test count moved from 170 passed / 1 failed to
+194 passed / 4 skipped / 0 failed.
+
+| Branch | Commit | Scope |
+| --- | --- | --- |
+| `refactor/repo-structure-privacy` | `4a5aeb6` | Companion Project handoff infrastructure (this docs set) |
+| `fix/golden-master-determinism` | `2a26f1d` | BACKLOG-001: deterministic valuation-only rollup as-of date |
+| `chore/review-defects` | `11b39ff` | BACKLOG-002/005/007: cap-headroom tests, `ValueError`, README |
+| `chore/minor-defects` | *(this branch)* | BACKLOG-003/004/006 + NEW-1/3/4/5 |
+
+**Still open:** NEW-2 (twelve broad `except Exception` blocks, two silent).
 ## Backlog items created, updated, promoted or superseded
 
 - None from this work package yet.

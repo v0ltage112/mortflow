@@ -1,0 +1,28 @@
+# .gitattributes -- normalise line endings and mark binary files.
+#
+# Why this exists: Git stores line endings differently on Windows (CRLF) and
+# Linux/macOS (LF). Without this file, a file can flip between the two depending
+# on who last touched it. That matters here because the golden-master test
+# compares committed CSV fixtures: a line-ending change would fail the
+# comparison for a reason that has nothing to do with the numbers.
+#
+# Rule: text files are stored in the repository with LF, and checked out with
+# the platform's native ending. The golden CSV fixtures are pinned to LF so the
+# comparison is stable across machines.
+
+# Default: let Git normalise text files to LF in the repository.
+* text=auto eol=lf
+
+# Golden-master fixtures: pin to LF so the byte comparison is machine-independent.
+tests/fixtures/golden/** text eol=lf
+
+# Windows launchers: keep CRLF so they run correctly in cmd.exe.
+*.bat text eol=crlf
+
+# Binary files: never touch these.
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary

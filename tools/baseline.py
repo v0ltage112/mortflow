@@ -46,6 +46,8 @@ import yaml
 import pandas as pd
 
 from src.engine import load_inputs, load_actuals, run_engine
+from src.engine.helpers import slugify
+from src.engine.schema import VALUATION_ONLY_KINDS
 from src.metrics import compute_baseline_kpis
 # Phase 2 path resolver: output root and per-property paths come from the config
 # layer instead of being assumed relative to the current working directory.
@@ -54,8 +56,9 @@ from src.paths import resolve_out_dir, resolve_relative
 
 # Phase 6 / S5: property kinds that carry no mortgage. A baseline freezes the
 # contractual mortgage schedule, so a no-loan property has nothing to baseline.
-# Mirrors the owned-outright spellings the schema accepts.
-_VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
+# The canonical set lives in src.engine.schema so the engine, the tools and the
+# tests cannot drift apart on what "no mortgage" means.
+_VALUATION_ONLY_KINDS = VALUATION_ONLY_KINDS
 
 
 # ---------------- utilities ----------------
@@ -65,24 +68,20 @@ def _slug(name: str) -> str:
 
     Finance note: the slug is the per-property subfolder name (for example
     'Property A' -> 'property-a'), so each property's frozen baseline lands in
-    its own predictable place.
+    its own predictable place. Delegates to the canonical helpers.slugify so the
+    baseline folder and the engine's workbook slug can never drift apart.
     """
-    s = name.strip().lower()
-    for ch in [' ', '/', '\\', ',', '.', "'", '"', '&', '(', ')', '[', ']', ':', ';', '|', '?', '!']:
-        s = s.replace(ch, '-')
-    while '--' in s:
-        s = s.replace('--', '-')
-    return s.strip('-')
+    return slugify(name)
 
 
 def _read_yaml(p: Path) -> dict:
     """Read a YAML file into a plain dict."""
-    return yaml.safe_load(p.read_text())
+    return yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
 def _write_yaml(p: Path, data: dict) -> None:
     """Write a dict back to YAML, keeping key order for a readable diff."""
-    p.write_text(yaml.safe_dump(data, sort_keys=False))
+    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def _is_valuation_only(p: dict) -> bool:

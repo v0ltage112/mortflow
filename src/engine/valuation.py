@@ -29,7 +29,6 @@ has a single definition across the package. Behaviour is identical.
 
 from __future__ import annotations
 
-import sys
 from datetime import date
 from typing import List
 
@@ -83,8 +82,3 @@ def property_value_on(inputs: "Inputs", dt: date) -> float:
 
     months = _months_between(active.start, dt)
     return float(active.base_value * ((1.0 + active.growth_pa) ** (months / 12.0)))
-
-
-# Plain-English status line for troubleshooting; stderr only so the CLI's stdout
-# (and the golden-master subprocess output) stays byte-for-byte identical.
-print("[engine.valuation] property valuation helpers ready", file=sys.stderr)

@@ -389,7 +389,7 @@ def run_valuation_only(inputs: Inputs, inputs_path: Path, out_dir: Path) -> pd.D
 
     # Re-read the raw YAML for the dedicated valuation block: the schema loader
     # intentionally does not parse it (a no-mortgage file has no loan block).
-    raw_cfg = yaml.safe_load(Path(inputs_path).read_text())
+    raw_cfg = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
 
     anchor = _read_valuation_anchor(inputs, raw_cfg)
     schedule = build_valuation_schedule(inputs, anchor)
@@ -399,5 +399,3 @@ def run_valuation_only(inputs: Inputs, inputs_path: Path, out_dir: Path) -> pd.D
     # Plain-English completion line for troubleshooting (stderr only).
     print("[engine.valuation_only] valuation-only run complete", file=sys.stderr)
     return schedule
-
-print("[engine.valuation_only] no-mortgage valuation-only path ready", file=sys.stderr)

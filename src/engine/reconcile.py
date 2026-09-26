@@ -116,6 +116,3 @@ def build_reconcile(events_df: pd.DataFrame, actuals: pd.DataFrame, inputs: "Inp
         )
 
     return rec
-
-
-print("[engine.reconcile] reconcile module ready", file=sys.stderr)

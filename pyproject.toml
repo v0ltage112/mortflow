@@ -1,0 +1,47 @@
+# pyproject.toml -- project metadata and tool configuration.
+#
+# mortflow is a daily ACT/365 cashflow engine for Irish residential mortgages.
+# This file declares the project, its Python requirement, and how the test suite
+# is run. Runtime dependencies stay in requirements.txt (pinned exactly, so the
+# golden master reproduces the same numbers); test-only tools live in
+# requirements-dev.txt.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mortflow"
+version = "2.2.0"
+description = "Daily ACT/365 cashflow engine for Irish residential mortgages"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Ali Madras", email = "a.a.madras@gmail.com" }]
+keywords = ["mortgage", "cashflow", "act-365", "form-11", "ireland"]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial",
+]
+
+# Runtime dependencies are declared in requirements.txt (exact pins) so a single
+# source of truth governs the reproducible run. Listed here as floors only, so
+# `pip install -e .` works without duplicating the pins.
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "PyYAML>=6.0",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "holidays>=0.50"]
+
+[tool.setuptools]
+# Only the product packages are installed; tools/ and tests/ stay in the repo.
+packages = ["src", "src.engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

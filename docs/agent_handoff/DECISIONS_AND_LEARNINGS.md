@@ -140,3 +140,14 @@ Believed true but not yet fully verified. Re-check before relying on them.
   input validation.
 - **L5.** On Windows, `Path.read_text()` without `encoding="utf-8"` uses the
   locale code page and can mis-read UTF-8 content.
+- **L6.** Importing a module should be silent. Import-time `print()` calls are
+  debugging leftovers that clutter every run and hide real warnings.
+- **L7.** A duplicated constant (a kind set, a slugify, a date helper) drifts
+  silently. Keep one canonical definition and import it. But check equivalence
+  first: `tax._ensure_date` is deliberately lenient where `helpers.ensure_date`
+  is strict, so they are not interchangeable.
+- **L8.** Without `.gitattributes`, line endings can flip between CRLF and LF,
+  which would fail a byte-comparison golden master for a reason unrelated to the
+  numbers.
+- **L9.** `assert` is stripped under `python -O`; use explicit exceptions for
+  input validation. (See also L4.)

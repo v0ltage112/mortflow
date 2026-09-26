@@ -15,6 +15,12 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import yaml
 
+# The month-end helper is shared with the engine so the tax year and the
+# interest posting month can never disagree. ``_ensure_date`` stays local: it is
+# deliberately lenient (pandas parsing) where the engine's is strict, and the
+# tax layer accepts looser tenancy date formats.
+from .engine.helpers import eom as _eom
+
 
 # -------------------------- helpers --------------------------
 
@@ -22,11 +28,6 @@ def _ensure_date(x) -> date:
     if isinstance(x, date):
         return x
     return pd.to_datetime(str(x)).date()
-
-
-def _eom(d: date) -> date:
-    first_next = (d.replace(day=1) + pd.offsets.MonthBegin(1)).date()
-    return (first_next - timedelta(days=1))
 
 
 def _days_in_month(d: date) -> int:
@@ -61,7 +62,7 @@ def load_tenancies(preferred_path: Path, fallback_path: Path) -> Tuple[List[Tena
     Returns (tenancies, policy, raw_dict_for_audit).
     """
     path = preferred_path if preferred_path.exists() else fallback_path
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
 
     tenancies: List[Tenancy] = []
     for t in (raw.get("tenancies") or []):
@@ -78,7 +79,11 @@ def load_tenancies(preferred_path: Path, fallback_path: Path) -> Tuple[List[Tena
                 security_deposit=(float(t["security_deposit"]) if t.get("security_deposit") else None),
                 rtb_registered=bool(rtb.get("registered")) if "registered" in rtb else None,
                 rtb_registration_number=rtb.get("registration_number"),
-                rtb_registration_date=(_ensure_date(rtb["registration_date"]) if rtb.get("registration_date") else None),
+                rtb_registration_date=(
+                    _ensure_date(rtb["registration_date"])
+                    if rtb.get("registration_date")
+                    else None
+                ),
                 rpz=t.get("rpz"),
                 admin_charges=t.get("admin_charges"),
             )

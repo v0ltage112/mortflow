@@ -114,7 +114,13 @@ def main():
     # --actuals is optional at the parser level so a no-mortgage (valuation-only)
     # property can omit it. A mortgage-enabled property that omits it still
     # errors below, preserving the original contract for the loan path.
-    ap.add_argument("--actuals", type=Path, required=False, default=None, help="Path to actuals.csv (required for a mortgage property)")
+    ap.add_argument(
+        "--actuals",
+        type=Path,
+        required=False,
+        default=None,
+        help="Path to actuals.csv (required for a mortgage property)",
+    )
     # --out is optional now.  When omitted, the output folder is resolved through
     # the Phase 2 config layer (CLI > MORTGAGE_OUT_DIR > paths.local.yaml > <repo>/out).
     ap.add_argument("--out", type=Path, default=None, help="Output folder (overrides config)")
@@ -170,7 +176,7 @@ def main():
                 diff_bal = model_bal_same - bank_bal
 
     # Optional: prefer a newer portal snapshot if present
-    raw_cfg = yaml.safe_load(Path(args.inputs).read_text())
+    raw_cfg = yaml.safe_load(Path(args.inputs).read_text(encoding="utf-8"))
     snaps = (raw_cfg.get("reconcile") or {}).get("snapshots") or []
     if snaps:
         latest = max(snaps, key=lambda s: ensure_date(s["date"]))
@@ -329,7 +335,10 @@ def main():
 
             _format_sheet(
                 ws_r,
-                money_cols=["amount", "bank_running_balance", "model_amount", "model_balance", "diff_model_minus_bank"],
+                money_cols=[
+                    "amount", "bank_running_balance", "model_amount",
+                    "model_balance", "diff_model_minus_bank",
+                ],
                 date_cols=["bank_date"],
                 money_format=money_fmt,
             )
