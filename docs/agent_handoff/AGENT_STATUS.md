@@ -27,6 +27,7 @@
 | Data + out path | Private, outside the repo, linked via git-ignored `paths.local.yaml` (see `START_AGENT.md`) |
 | Old private repo | `github.com/v0ltage112/mortgage-model` (archived) |
 | Test count at last ship | 171 passed / 4 skipped / 0 failed (Phase 12, `v2.2.0`) |
+| Test count now | 173 passed / 4 skipped / 0 failed (after BACKLOG-001 fix) |
 
 ---
 
@@ -91,9 +92,11 @@ overpayment block.
 These were found during the 2026-09-26 review and are logged in
 `PRODUCT_BACKLOG.md`. None are Phase 13 scope.
 
-1. **Time-dependent golden master** — `tools/portfolio.py::_valuation_summary_row`
-   uses `date.today()`, so `portfolio_summary.csv` drifts daily. Suite currently
-   reports **1 failed, 170 passed, 4 skipped**.
+1. ~~**Time-dependent golden master**~~ **FIXED 2026-09-26** on branch
+   `fix/golden-master-determinism` (BACKLOG-001). `_valuation_summary_row` now
+   derives its as-of date from config (`valuation.as_of_date`, else
+   `modelling.end_date`) instead of `date.today()`. Suite is green: 173 passed /
+   4 skipped / 0 failed. The golden fixture was **not** re-baselined.
 2. `tests/test_overpayment_cap_headroom.py` is committed but **empty (0 bytes)**.
 3. `Path.read_text()` without explicit `encoding="utf-8"` in several modules.
 4. Duplicated `_VALUATION_ONLY_KINDS`, `_slugify`, and tax date helpers.
@@ -104,9 +107,9 @@ These were found during the 2026-09-26 review and are logged in
 
 ## Exact next action
 
-1. **Resolve the golden-master time dependency** (defect 1) so the suite is
-   green, then re-run `pytest -q` and record the result here.
-2. **Cut `phase13/scenario-engine`** off `main` at `218f8ce` and begin S1
+1. **Merge `fix/golden-master-determinism`** into `main` (suite green, fixture
+   unchanged).
+2. **Cut `phase13/scenario-engine`** off `main` and begin S1
    (`scenarios.yaml` schema, loader, and clone-and-perturb).
 3. Confirm the S1 open questions (actuals-based scenarios, output placement).
 
