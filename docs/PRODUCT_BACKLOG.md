@@ -498,26 +498,26 @@ monthly columns (headroom, flag, cumulative).
 
 ### BACKLOG-003: Explicit UTF-8 encodings on text reads
 
-Status: READY
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-Several `Path.read_text()` calls omit `encoding="utf-8"` (schema, tax,
-portfolio, `__main__`), so Windows uses the locale code page.
+Several `Path.read_text()` calls omitted `encoding="utf-8"` (schema, tax,
+profile, portfolio, baseline, `__main__`, `valuation_only`), so Windows used the
+locale code page.
 
 #### Reason not now
-Not Phase 13 scope.
-
+-
 #### Likely outcome
 Portable, locale-independent file reads.
 
 #### Build notes
-Add `encoding="utf-8"` (or `utf-8-sig` where a BOM is possible).
+**Done 2026-09-26** (BACKLOG-003): explicit `encoding="utf-8"` added to every
+remaining read and write in `src/` and `tools/`.
 
 #### Promotion trigger
-Immediate — small, low risk.
-
+-
 #### Related records
 `DECISIONS_AND_LEARNINGS.md` (L5).
 
@@ -525,28 +525,29 @@ Immediate — small, low risk.
 
 ### BACKLOG-004: De-duplicate kind sets, slugify and tax date helpers
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-`_VALUATION_ONLY_KINDS` is defined in both `tests/conftest.py` and
-`tools/portfolio.py`; `_slugify` duplicates `helpers.slugify`; `src/tax.py`
-re-implements `_ensure_date` / `_eom` / `_days_in_month`.
+`_VALUATION_ONLY_KINDS` was defined in `tests/conftest.py`, `tools/baseline.py`
+and `tools/portfolio.py`; `_slugify` duplicated `helpers.slugify`; `src/tax.py`
+re-implemented `_eom`.
 
 #### Reason not now
-Not Phase 13 scope.
-
+-
 #### Likely outcome
 One canonical definition of each, imported everywhere.
 
 #### Build notes
-Move the kind set into `schema.py`; import `helpers.slugify`; reuse the shared
-date helpers.
+**Done 2026-09-26** (BACKLOG-004): the kind set now lives once as
+`schema.VALUATION_ONLY_KINDS`; `baseline._slug` and `conftest._slugify` delegate
+to `helpers.slugify`; `tax._eom` is imported from `helpers`. `tax._ensure_date`
+was deliberately left local: it is lenient (pandas parsing) where the engine's is
+strict, so swapping it would change behaviour.
 
 #### Promotion trigger
-When touching those modules for another reason.
-
+-
 #### Related records
 `DECISIONS_AND_LEARNINGS.md` (L3).
 
@@ -580,26 +581,26 @@ an actionable message; also reads with explicit UTF-8. Three tests added.
 
 ### BACKLOG-006: Add `pyproject.toml`; move pytest to dev requirements
 
-Status: CANDIDATE
+Status: PROMOTED
 Captured: 2026-09-26
 Source: repo review
 
 #### Context
-No `pyproject.toml`; `pytest` is listed in runtime `requirements.txt` though it
+No `pyproject.toml`; `pytest` was listed in runtime `requirements.txt` though it
 is a dev tool.
 
 #### Reason not now
-Not Phase 13 scope.
-
+-
 #### Likely outcome
 Standard project metadata and a clean runtime/dev split.
 
 #### Build notes
-Add `pyproject.toml`; move `pytest` to `requirements-dev.txt`.
+**Done 2026-09-26** (BACKLOG-006): `pyproject.toml` added (metadata, Python
+floor, pytest config, optional dev extras); `pytest` moved to
+`requirements-dev.txt`.
 
 #### Promotion trigger
-When packaging or tooling is next touched.
-
+-
 #### Related records
 `requirements.txt`; `requirements-dev.txt`.
 
@@ -659,3 +660,137 @@ position.
 
 #### Related records
 `DECISIONS_AND_LEARNINGS.md` (D11); Operating Contract section 10.
+
+---
+
+## Code hygiene (from the 2026-09-26 deep scan)
+
+### NEW-1: Remove import-time "ready" prints
+
+Status: PROMOTED
+Captured: 2026-09-26
+Source: deep scan
+
+#### Context
+Eleven engine modules printed a "ready" line to stderr the moment they were
+imported, before any work was requested. Debugging leftovers.
+
+#### Reason not now
+-
+#### Likely outcome
+Silent imports.
+
+#### Build notes
+**Done 2026-09-26** (NEW-1): all eleven import-time prints removed; seven
+now-unused `import sys` lines dropped. `import src.engine` is now silent.
+
+#### Promotion trigger
+-
+#### Related records
+`AGENT_STATUS.md` (known defects).
+
+---
+
+### NEW-2: Narrow broad `except Exception` blocks
+
+Status: READY
+Captured: 2026-09-26
+Source: deep scan
+
+#### Context
+Twelve places catch any exception. Two swallow the error silently with `pass`:
+`src/engine/__main__.py:249` and `tools/portfolio.py:314`. Catching everything
+can hide a real bug and let a run continue with a wrong or missing result.
+
+#### Reason not now
+Not Phase 13 scope; the paths are not currently triggering.
+
+#### Likely outcome
+Specific exceptions caught, and a warning logged rather than passing silently.
+
+#### Build notes
+Narrow the caught types where possible; log a warning instead of `pass`. Review
+each site individually: some are deliberate graceful degradation.
+
+#### Promotion trigger
+When those error paths are next touched.
+
+#### Related records
+`DECISIONS_AND_LEARNINGS.md`; skill error-handling guidance.
+
+---
+
+### NEW-3: Add `.gitattributes`
+
+Status: PROMOTED
+Captured: 2026-09-26
+Source: deep scan
+
+#### Context
+No `.gitattributes`, so line endings could flip between CRLF and LF. The golden
+master compares committed CSV fixtures, so a line-ending change would fail the
+comparison for a reason unrelated to the numbers.
+
+#### Reason not now
+-
+#### Likely outcome
+Stable line endings across machines.
+
+#### Build notes
+**Done 2026-09-26** (NEW-3): `.gitattributes` added, pinning golden fixtures to
+LF and `.bat` files to CRLF.
+
+#### Promotion trigger
+-
+#### Related records
+`tests/fixtures/golden/`; BACKLOG-111 (CI pipeline).
+
+---
+
+### NEW-4: Align `run_sample.bat` with `run.bat`
+
+Status: PROMOTED
+Captured: 2026-09-26
+Source: deep scan
+
+#### Context
+`run.bat` used the `tools/_resolve.py` shim; `run_sample.bat` used an inline
+`python -c "..."` command, the fragile form that previously caused cmd.exe
+quoting problems.
+
+#### Reason not now
+-
+#### Likely outcome
+Both launchers use the same robust technique.
+
+#### Build notes
+**Done 2026-09-26** (NEW-4): `run_sample.bat` now calls `tools/_resolve.py`.
+
+#### Promotion trigger
+-
+#### Related records
+`run.bat`; `tools/_resolve.py`.
+
+---
+
+### NEW-5: Wrap lines over 120 characters
+
+Status: PROMOTED
+Captured: 2026-09-26
+Source: deep scan
+
+#### Context
+Five lines in `src/` exceeded 120 characters.
+
+#### Reason not now
+-
+#### Likely outcome
+Consistent line length.
+
+#### Build notes
+**Done 2026-09-26** (NEW-5): all five wrapped.
+
+#### Promotion trigger
+-
+#### Related records
+PEP 8.

@@ -40,7 +40,6 @@ one in the same session.
 
 from __future__ import annotations
 
-import sys
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -178,8 +177,3 @@ def slugify(name: str) -> str:
         s = s.replace('--', '-')
     # Trim leading/trailing hyphens so the slug never starts or ends with one.
     return s.strip('-')
-
-
-# Plain-English status line for troubleshooting; stderr only so the CLI's stdout
-# (and the golden-master subprocess output) stays byte-for-byte identical.
-print("[engine.helpers] date and numeric helpers ready", file=sys.stderr)

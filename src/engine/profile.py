@@ -32,7 +32,6 @@ Section B.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -208,7 +207,7 @@ def parse_lender_profile(raw: dict) -> LenderProfile:
 def load_lender_profile(path: Path) -> LenderProfile:
     """Read and parse a lender profile YAML file into a :class:`LenderProfile`."""
     path = Path(path)
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     return parse_lender_profile(raw)
 
 
@@ -234,6 +233,3 @@ def resolve_lender_profile(lender: str, lenders_dir: Path) -> LenderProfile:
         f"no lender profile for {lender!r} under {lenders_dir}; expected one of: "
         + ", ".join(c.name for c in candidates)
     )
-
-
-print("[engine.profile] lender profile loader and resolver ready", file=sys.stderr)

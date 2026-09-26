@@ -67,10 +67,27 @@ See `agent_handoff/work_packages/FEATURE_P13_scenario_engine.md` for detail.
 
 ## Protected baselines
 
-- **Golden master** (`tests/fixtures/golden/`) — the behaviour lock.
-- **Conserved quantities** — total paid, interest, principal, balance, payoff.
-- **`data_sample/`** — the tracked demo data the golden master runs against.
-- **`v2.2.0`** — the rollback reference for Phase 13.
+- **Golden master** (`tests/fixtures/golden/`) - the behaviour lock.
+- **Conserved quantities** - total paid, interest, principal, balance, payoff.
+- **`data_sample/`** - the tracked demo data the golden master runs against.
+- **`v2.2.0`** - the rollback reference for Phase 13.
+
+---
+
+## Maintenance work (between phases)
+
+Small, low-risk changes that are not part of a phase. All completed 2026-09-26,
+all with no change to engine maths or golden fixtures.
+
+| Branch | Commit | What |
+| --- | --- | --- |
+| `refactor/repo-structure-privacy` | `4a5aeb6` | Companion Project handoff infrastructure (docs) |
+| `fix/golden-master-determinism` | `2a26f1d` | BACKLOG-001: deterministic valuation-only rollup as-of date |
+| `chore/review-defects` | `11b39ff` | BACKLOG-002/005/007: cap-headroom tests, `ValueError`, README |
+| `chore/minor-defects` | *(this branch)* | BACKLOG-003/004/006 + NEW-1/3/4/5: encodings, de-duplication, packaging, hygiene |
+
+Test count moved from 170 passed / 1 failed to **194 passed / 4 skipped / 0 failed**.
+No golden fixture was re-baselined at any point.
 
 ---
 

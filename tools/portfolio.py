@@ -56,13 +56,15 @@ from src.metrics import compute_baseline_kpis
 # One canonical slugify lives in the engine (Phase 8 / S2), so the workbook
 # slug and this output-folder slug are produced by the same function.
 from src.engine.helpers import slugify
+# The canonical "no mortgage" kind set lives in the schema, so the engine, the
+# tools and the tests cannot drift apart on what a valuation-only property is.
+from src.engine.schema import VALUATION_ONLY_KINDS
 # Output root and per-property paths come from the config layer (Phase 2)
 # instead of being assumed relative to the current working directory.
 from src.paths import resolve_out_dir, resolve_relative
 
 # Kinds that carry no mortgage and therefore run the valuation-only path.
-# Mirrors the owned-outright spellings the schema accepts.
-_VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
+_VALUATION_ONLY_KINDS = VALUATION_ONLY_KINDS
 
 # Default CSV sub-folder for the top-level portfolio rollup.
 DEFAULT_CSV_SUBDIR = "csv"
@@ -187,7 +189,7 @@ def _derive_as_of(csv_dir: Path, inputs_path: Path) -> Optional[_dt.date]:
         if not rec.empty and "bank_date" in rec.columns:
             as_of = _to_date(rec["bank_date"].max())
     try:
-        raw = yaml.safe_load(Path(inputs_path).read_text())
+        raw = yaml.safe_load(Path(inputs_path).read_text(encoding="utf-8"))
     except Exception:
         raw = {}
     snaps = ((raw or {}).get("reconcile") or {}).get("snapshots") or []

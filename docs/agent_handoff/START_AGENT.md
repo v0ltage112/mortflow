@@ -29,13 +29,17 @@ or strict "contract only" benchmarks captured.
 | Asset | Location |
 | --- | --- |
 | Product code | `src/` (`src/engine/` package, `src/paths.py`, `src/tax.py`, `src/metrics.py`) |
-| Developer tools | `tools/` (`baseline.py`, `portfolio.py`, `verify_calendar.py`) |
+| Developer tools | `tools/` (`baseline.py`, `portfolio.py`, `verify_calendar.py`, `_resolve.py`) |
 | Tests | `tests/` (pytest; golden master in `tests/fixtures/golden/`) |
-| Bundled demo data | `data_sample/` (tracked — zero-config demo runs) |
+| Bundled demo data | `data_sample/` (tracked - zero-config demo runs) |
 | Real data | `data/` (git-ignored) |
 | Technical docs | `docs/` |
 | Agent handoff | `docs/agent_handoff/` (this folder) |
 | Product direction | `docs/PRODUCT_VISION.md`, `docs/PRODUCT_DELIVERY_PLAN.md`, `docs/PRODUCT_BACKLOG.md` |
+| Project metadata | `pyproject.toml` (metadata, Python floor, pytest config) |
+| Runtime deps | `requirements.txt` (exact pins) |
+| Dev deps | `requirements-dev.txt` (`pytest`, `holidays`) |
+| Line endings | `.gitattributes` (golden fixtures pinned to LF) |
 
 ---
 
@@ -171,7 +175,8 @@ the source of truth; the Notion code mirror is not migrated here.
 ```powershell
 # Tests
 .\.venv\Scripts\python.exe -m pytest -q
-
+# Install (runtime + dev)
+pip install -r requirements.txt -r requirements-dev.txt
 # Sample run (bundled data, no config)
 run_sample.bat
 

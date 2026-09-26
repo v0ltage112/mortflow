@@ -23,8 +23,6 @@ Phase 5 / S1 note: structural only. No behaviour change.
 
 from __future__ import annotations
 
-import sys
-
 # Generic date/numeric helpers.
 from .helpers import (
     ensure_date,
@@ -94,5 +92,3 @@ __all__ = [
     # report
     "compute_portal_style_metrics",
 ]
-
-print("[engine] package facade ready (src.engine re-exports loaded)", file=sys.stderr)

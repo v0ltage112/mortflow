@@ -40,7 +40,6 @@ session so the golden accrual divisor does not move here.
 
 from __future__ import annotations
 
-import sys
 from datetime import date, timedelta
 from typing import Dict, Optional
 
@@ -229,6 +228,3 @@ def compute_portal_style_metrics(
 
     ytd_portal = posted_ytd + round(accr, 2)
     return {"principal_excl_unposted": last_bal, "ytd_interest_portal": ytd_portal}
-
-
-print("[engine.report] xlsx helpers and portal metrics ready", file=sys.stderr)

@@ -47,7 +47,6 @@ re-baselines.
 
 from __future__ import annotations
 
-import sys
 from datetime import date, timedelta
 from functools import lru_cache
 from typing import List, Set
@@ -244,8 +243,3 @@ def adjust_for_convention(d: date, convention: str) -> date:
     if convention == CONVENTION_MODIFIED_FOLLOWING:
         return modified_following(d)
     return d
-
-
-# Plain-English status line for troubleshooting; stderr only so stdout (and the
-# golden-master subprocess output) stays byte-for-byte identical.
-print("[engine.calendar_ie] Irish business-day calendar ready", file=sys.stderr)

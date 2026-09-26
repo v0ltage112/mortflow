@@ -617,6 +617,3 @@ def build_monthly_schedule(
             monthly["eom_diff_model_minus_bank"] = monthly["model_eom_balance"] - monthly["bank_eom_running_balance"]
 
     return monthly
-
-
-print("[engine.monthly] monthly scaffolding and schedule assembly ready", file=sys.stderr)

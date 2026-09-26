@@ -48,13 +48,10 @@ if str(_REPO_ROOT) not in sys.path:
 from src.engine import load_inputs, load_actuals, run_engine, compute_portal_style_metrics  # type: ignore
 # P2/S2: config-aware path resolution, shared with engine.py and the tools.
 from src.paths import resolve_data_dir, resolve_relative  # type: ignore
-
-
-# P11/S2: property kinds that carry no mortgage and therefore have no bank
-# actuals to reconcile against. Mirrors tools/portfolio.py so the test harness
-# and the runner agree on what "valuation-only" means without importing schema
-# internals.
-_VALUATION_ONLY_KINDS = {"owned_outright", "owned-outright", "outright", "owned"}
+# The canonical slugify and "no mortgage" kind set live in the engine, so the
+# test harness, the tools and the engine cannot drift apart.
+from src.engine.helpers import slugify as _slugify  # type: ignore
+from src.engine.schema import VALUATION_ONLY_KINDS as _VALUATION_ONLY_KINDS  # type: ignore
 
 
 # --------------------------- CLI options --------------------------------------
@@ -75,16 +72,6 @@ def pytest_addoption(parser):
 
 
 # --------------------------- helpers ------------------------------------------
-
-def _slugify(name: str) -> str:
-    """Convert a property name to a filesystem-friendly slug."""
-    s = name.strip().lower()
-    for ch in [' ', '/', '\\', ',', '.', "'", '"', '&', '(', ')', '[', ']', ':', ';', '|', '?', '!']:
-        s = s.replace(ch, '-')
-    while '--' in s:
-        s = s.replace('--', '-')
-    return s.strip('-')
-
 
 def _is_valuation_only(p: dict) -> bool:
     """Return True when a portfolio entry is a no-mortgage, valuation-only property.

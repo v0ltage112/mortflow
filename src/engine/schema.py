@@ -90,7 +90,6 @@ keep an inert ``overpayment_cap_pct`` key, which the loader now ignores.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -141,6 +140,14 @@ _KIND_ALIASES: Dict[str, str] = {
 # A file with no kind (or only the legacy \"mode\") behaves as before: an
 # investment property with mortgage, tax, and valuation all on.
 DEFAULT_KIND = "investment"
+
+# The canonical set of kind spellings that mean "no mortgage". A valuation-only
+# property has no loan, so the baseline tool skips it and the portfolio runner
+# routes it to the valuation-only path. Defined once here so the engine, the
+# tools and the test harness can never drift apart on what "no mortgage" means.
+VALUATION_ONLY_KINDS: frozenset = frozenset(
+    {"owned_outright", "owned-outright", "outright", "owned"}
+)
 
 # Phase 6 / S4: recognised payment-holiday modes. Parsed and validated but not
 # yet applied to the schedule (parse-and-defer), so a typo is caught early while
@@ -378,7 +385,8 @@ class Inputs:
     # \"false\" -> always post a separate Extra
     # \"auto\"  -> behave like \"true\" (default)
     merge_extra_mode: str = "auto"
-    valuation_blocks: List[ValuationBlock] = field(default_factory=list)  # optional; overrides simple growth if provided
+    # Optional; overrides simple growth if provided.
+    valuation_blocks: List[ValuationBlock] = field(default_factory=list)
     reconcile_ok_abs_eur: float = 0.01
     posting_order: str = "debit_then_post"  # 'debit_then_post' | 'post_then_debit'
     # Phase 6 / S2: identity + module toggles. Optional default keeps the
@@ -607,7 +615,7 @@ _StrictLoader.add_constructor(
 
 def _load_yaml_strict(path: Path) -> dict:
     """Read a YAML file with duplicate-key detection enabled."""
-    return yaml.load(Path(path).read_text(), Loader=_StrictLoader)
+    return yaml.load(Path(path).read_text(encoding="utf-8"), Loader=_StrictLoader)
 
 
 def _resolve_contractual_ladder(raw: dict, drawdown_date: Optional[date]) -> List[ContractualStep]:
@@ -1154,6 +1162,3 @@ def resolve_breakage_reference(
         deposit_rate=mm.deposit_rate,
         note="",
     )
-
-
-print("[engine.schema] input schema and loaders ready", file=sys.stderr)

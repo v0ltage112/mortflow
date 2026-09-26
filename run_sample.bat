@@ -20,8 +20,8 @@ REM     This env var overrides paths.local.yaml so no local config is needed.
 set "MORTGAGE_DATA_DIR=%~dp0data_sample"
 set "MORTGAGE_OUT_DIR=%~dp0out"
 
-for /f "delims=" %%i in ('python -c "from src.paths import resolve_data_dir; print(resolve_data_dir())"') do set "DATA_DIR=%%i"
-for /f "delims=" %%i in ('python -c "from src.paths import resolve_out_dir; print(resolve_out_dir())"') do set "OUT_DIR=%%i"
+for /f "delims=" %%i in ('python tools\_resolve.py data') do set "DATA_DIR=%%i"
+for /f "delims=" %%i in ('python tools\_resolve.py out') do set "OUT_DIR=%%i"
 
 python -m tools.baseline --portfolio "%DATA_DIR%\portfolio.yaml" --out "%OUT_DIR%" || goto :err
 python -m tools.portfolio --portfolio "%DATA_DIR%\portfolio.yaml" --out "%OUT_DIR%" || goto :err
